@@ -18,17 +18,15 @@ import {
   Settings,
   Menu,
   X,
-  Sun,
-  Moon,
   Keyboard,
   Compass,
 } from 'lucide-react';
 import { radius } from '../design';
 import { useAppContext } from '../context/AppContext';
-import { useTheme } from '../context/ThemeContext';
 import { useGlobalShortcuts } from '../hooks/useGlobalShortcuts';
 import KeyboardShortcutsModal from './KeyboardShortcutsModal';
 import ShortcutHUD from './ShortcutHUD';
+import ThemePopover from './ThemePopover';
 import { useTour } from './tour';
 
 interface NavItem {
@@ -89,7 +87,6 @@ export default function Layout() {
   const [mobileOpen, setMobileOpen] = useState(false);
   const [shortcutsOpen, setShortcutsOpen] = useState(false);
   const { isProjectMode } = useAppContext();
-  const { theme, toggleTheme } = useTheme();
   const { startTour } = useTour();
 
   const nav = useNavigate();
@@ -195,14 +192,7 @@ export default function Layout() {
 
         {/* Bottom bar — match nav item style */}
         <div className="mt-auto border-t border-muted px-2 py-2 flex flex-col gap-0.5">
-          <button
-            onClick={toggleTheme}
-            className="flex items-center gap-3 px-3 py-1.5 text-sm text-pencil-light hover:text-pencil hover:bg-muted/20 transition-colors cursor-pointer"
-            aria-label={theme === 'dark' ? 'Switch to light theme' : 'Switch to dark theme'}
-          >
-            {theme === 'dark' ? <Sun size={16} strokeWidth={2.5} /> : <Moon size={16} strokeWidth={2.5} />}
-            {theme === 'dark' ? 'Light mode' : 'Dark mode'}
-          </button>
+          <ThemePopover />
           <button
             onClick={startTour}
             className="flex items-center gap-3 px-3 py-1.5 text-sm text-pencil-light hover:text-pencil hover:bg-muted/20 transition-colors cursor-pointer"

@@ -34,7 +34,7 @@ export default function SegmentedControl<T extends string>({
   if (connected) {
     return (
       <div
-        className="inline-flex items-center gap-0.5 p-1 border border-muted bg-muted/40"
+        className="ss-segmented ss-segmented-connected inline-flex items-center gap-0.5 p-1 border border-muted bg-muted/40"
         style={{ borderRadius: radius.sm }}
       >
         {options.map((opt) => {
@@ -45,7 +45,7 @@ export default function SegmentedControl<T extends string>({
               key={opt.value}
               onClick={() => onChange(opt.value)}
               className={`
-                inline-flex items-center ${sizeClasses[size]} transition-colors cursor-pointer font-medium
+                ss-segmented-item inline-flex items-center ${sizeClasses[size]} transition-colors cursor-pointer font-medium
                 ${isActive
                   ? color ? '' : 'bg-surface text-pencil shadow-sm border border-muted'
                   : 'text-pencil-light hover:text-pencil border border-transparent'
@@ -55,6 +55,7 @@ export default function SegmentedControl<T extends string>({
                 borderRadius: radius.sm,
                 ...(isActive && color ? { backgroundColor: color, color: 'var(--color-paper)' } : {}),
               }}
+              aria-pressed={isActive}
             >
               {opt.label}
               {opt.count != null && (
@@ -70,7 +71,7 @@ export default function SegmentedControl<T extends string>({
   }
 
   return (
-    <div className="inline-flex items-center gap-1">
+    <div className="ss-segmented inline-flex items-center gap-1">
       {options.map((opt) => {
         const isActive = value === opt.value;
         const color = colorFn?.(opt.value);
@@ -79,10 +80,10 @@ export default function SegmentedControl<T extends string>({
             key={opt.value}
             onClick={() => onChange(opt.value)}
             className={`
-              inline-flex items-center ${sizeClasses[size]} border-2 transition-all duration-150 cursor-pointer font-medium
+              ss-segmented-item inline-flex items-center ${sizeClasses[size]} border transition-all duration-150 cursor-pointer font-medium
               ${isActive
-                ? color ? '' : 'bg-pencil text-paper border-pencil'
-                : 'bg-transparent text-pencil border-muted-dark hover:border-pencil'
+                ? color ? '' : 'bg-surface text-pencil border-muted-dark'
+                : 'bg-transparent text-pencil-light border-muted hover:border-muted-dark hover:text-pencil'
               }
             `}
             style={{
@@ -90,9 +91,10 @@ export default function SegmentedControl<T extends string>({
               ...(isActive
                 ? color
                   ? { backgroundColor: color, borderColor: color, color: 'var(--color-paper)', boxShadow: shadows.sm }
-                  : { boxShadow: shadows.sm }
+                  : {}
                 : {}),
             }}
+            aria-pressed={isActive}
           >
             {opt.label}
             {opt.count != null && (

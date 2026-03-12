@@ -120,6 +120,7 @@ export default function AuditPage() {
   return (
     <div className="space-y-6">
       {/* Header */}
+      <div data-tour="audit-summary">
       <PageHeader
         icon={<ShieldCheck size={24} strokeWidth={2.5} />}
         title="Security Audit"
@@ -144,6 +145,7 @@ export default function AuditPage() {
           </>
         }
       />
+      </div>
 
       {/* Loading / Progress */}
       {loading && (
@@ -173,7 +175,6 @@ export default function AuditPage() {
           <AuditSummaryLine summary={data.summary} />
 
           {/* Triage Panel */}
-          <div data-tour="audit-summary">
           <TriagePanel
             threshold={data.summary.threshold}
             riskLabel={data.summary.riskLabel}
@@ -186,7 +187,6 @@ export default function AuditPage() {
             minSeverity={minSeverity}
             onSeverityChange={(v) => setMinSeverity(v as SeverityFilter)}
           />
-          </div>
 
           {/* Findings list */}
           {totalFindings === 0 ? (

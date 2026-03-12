@@ -14,7 +14,7 @@ import Card from '../components/Card';
 import CopyButton from '../components/CopyButton';
 import Button from '../components/Button';
 import IconButton from '../components/IconButton';
-import { PageSkeleton } from '../components/Skeleton';
+import { SkillDetailSkeleton } from '../components/Skeleton';
 import { useToast } from '../components/Toast';
 import Spinner from '../components/Spinner';
 import ConfirmDialog from '../components/ConfirmDialog';
@@ -184,7 +184,7 @@ export default function SkillDetailPage() {
     return { byName, byFlat };
   }, [allSkills.data]);
 
-  if (isPending) return <PageSkeleton />;
+  if (isPending) return <SkillDetailSkeleton />;
   if (error) {
     return (
       <Card variant="accent" className="text-center py-8">

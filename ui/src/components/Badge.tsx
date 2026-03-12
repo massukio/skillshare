@@ -1,5 +1,3 @@
-import { radius } from '../design';
-
 interface BadgeProps {
   children: React.ReactNode;
   variant?: 'default' | 'success' | 'warning' | 'danger' | 'info' | 'accent';
@@ -33,10 +31,7 @@ const sizeClasses = {
 export default function Badge({ children, variant = 'default', size = 'sm', dot = false }: BadgeProps) {
   return (
     <span
-      className={`inline-flex items-center gap-1 font-medium ${variants[variant]} ${sizeClasses[size]}`}
-      style={{
-        borderRadius: radius.sm,
-      }}
+      className={`ss-badge inline-flex items-center gap-1 font-medium rounded-[var(--radius-sm)] ${variants[variant]} ${sizeClasses[size]}`}
     >
       {dot && (
         <span className={`w-1.5 h-1.5 rounded-full ${dotColors[variant]}`} />

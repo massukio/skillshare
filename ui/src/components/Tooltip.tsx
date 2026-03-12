@@ -1,6 +1,5 @@
 import { useState, useRef, useCallback, type ReactNode } from 'react';
 import { createPortal } from 'react-dom';
-import { radius } from '../design';
 
 interface TooltipProps {
   children: ReactNode;
@@ -34,11 +33,10 @@ export default function Tooltip({ children, content, side = 'bottom' }: TooltipP
       </span>
       {pos && createPortal(
         <div
-          className="fixed z-[9999] max-w-sm break-all whitespace-normal bg-pencil text-paper text-xs px-2.5 py-1.5 shadow-lg pointer-events-none animate-fade-in"
+          className="ss-tooltip fixed z-[9999] max-w-sm break-all whitespace-normal bg-pencil text-paper text-xs px-2.5 py-1.5 shadow-lg pointer-events-none animate-fade-in rounded-[var(--radius-sm)]"
           style={{
             left: pos.x,
             top: pos.y,
-            borderRadius: radius.sm,
             ...(side === 'top' ? { transform: 'translateY(-100%)' } : {}),
           }}
         >

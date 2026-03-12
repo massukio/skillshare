@@ -1,5 +1,4 @@
 import { useEffect, type ReactNode, type RefObject } from 'react';
-import { radius } from '../design';
 import { useFocusTrap } from '../hooks/useFocusTrap';
 
 const maxWidthClass = {
@@ -52,13 +51,12 @@ export default function DialogShell({
       }}
     >
       {/* Backdrop */}
-      <div className="absolute inset-0 bg-pencil/30 backdrop-blur-[2px]" />
+      <div className="ss-dialog-backdrop absolute inset-0 bg-pencil/30 backdrop-blur-[2px]" />
 
       {/* Content */}
       <div
         ref={trapRef as RefObject<HTMLDivElement>}
-        className={`relative w-full ${maxWidthClass[maxWidth]} animate-dialog-in ${className}`}
-        style={{ borderRadius: radius.md }}
+        className={`ss-dialog relative w-full ${maxWidthClass[maxWidth]} animate-dialog-in rounded-[var(--radius-md)] ${className}`}
       >
         {children}
       </div>

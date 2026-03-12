@@ -16,7 +16,7 @@ export default function ShortcutHUD({ visible }: ShortcutHUDProps) {
 
   return (
     <div
-      className="fixed bottom-6 left-1/2 -translate-x-1/2 z-50 flex items-center gap-4 px-4 py-2.5 bg-surface/95 backdrop-blur-sm border-2 border-pencil animate-fade-in"
+      className="ss-shortcut-hud fixed bottom-6 left-1/2 -translate-x-1/2 z-50 flex items-center gap-4 px-4 py-2.5 bg-surface/95 backdrop-blur-sm border-2 border-pencil animate-fade-in"
       style={{ borderRadius: radius.md, boxShadow: '0 2px 8px rgba(0,0,0,0.12)' }}
     >
       {modifierShortcuts.map((entry) => {

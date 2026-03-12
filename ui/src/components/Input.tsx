@@ -1,6 +1,5 @@
 import { useId } from 'react';
 import type { InputHTMLAttributes, TextareaHTMLAttributes } from 'react';
-import { radius } from '../design';
 
 // Re-export split components for backward compatibility
 export { Checkbox } from './Checkbox';
@@ -27,15 +26,16 @@ export function Input({ label, className = '', style, id, ...props }: InputProps
       <input
         id={inputId}
         className={`
+          ss-input
           w-full px-4 py-2.5 bg-surface border border-muted text-pencil
           placeholder:text-muted-dark
           hover:border-muted-dark
           focus:outline-none focus:border-pencil-light focus:ring-2 focus:ring-pencil/10 focus:shadow-sm
           transition-all
+          rounded-[var(--radius-md)]
           ${className}
         `}
         style={{
-          borderRadius: radius.md,
           fontSize: '1rem',
           ...style,
         }}
@@ -66,15 +66,16 @@ export function Textarea({ label, className = '', style, id, ...props }: Textare
       <textarea
         id={inputId}
         className={`
+          ss-input
           w-full px-4 py-3 bg-surface border border-muted text-pencil
           placeholder:text-muted-dark
           hover:border-muted-dark
           focus:outline-none focus:border-pencil-light focus:ring-2 focus:ring-pencil/10 focus:shadow-sm
           transition-all resize-y
+          rounded-[var(--radius-md)]
           ${className}
         `}
         style={{
-          borderRadius: radius.md,
           fontSize: '0.95rem',
           ...style,
         }}

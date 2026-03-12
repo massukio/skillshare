@@ -1,5 +1,4 @@
 import type { ReactNode, ButtonHTMLAttributes } from 'react';
-import { radius } from '../design';
 import Spinner from './Spinner';
 
 interface ButtonProps extends ButtonHTMLAttributes<HTMLButtonElement> {
@@ -34,10 +33,12 @@ export default function Button({
   ...props
 }: ButtonProps) {
   const isLink = variant === 'link';
+  const isGhostOrLink = variant === 'ghost' || variant === 'link';
   const isDisabled = disabled || loading;
   return (
     <button
       className={`
+        ${isGhostOrLink ? '' : 'ss-btn'}
         inline-flex items-center justify-center gap-2
         font-medium
         transition-all duration-150 cursor-pointer
@@ -45,13 +46,10 @@ export default function Button({
         focus-visible:ring-2 focus-visible:ring-pencil/20 focus-visible:ring-offset-2
         disabled:opacity-50 disabled:cursor-not-allowed disabled:active:scale-100
         ${variantClasses[variant]}
-        ${isLink ? 'text-sm p-0' : sizeClasses[size]}
+        ${isLink ? 'text-sm p-0' : `${sizeClasses[size]} rounded-[var(--radius-btn)]`}
         ${className}
       `}
-      style={{
-        borderRadius: isLink ? 0 : radius.btn,
-        ...style,
-      }}
+      style={style}
       disabled={isDisabled}
       {...props}
     >

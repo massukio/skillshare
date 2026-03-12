@@ -299,7 +299,7 @@ export default function DashboardPage() {
 
           <Link to="/audit" className="h-full">
             <div
-              className="flex items-center gap-3 px-5 py-4 h-full bg-info-light border-2 border-pencil transition-all duration-100 hover:translate-x-[2px] hover:translate-y-[2px] cursor-pointer"
+              className="flex items-center gap-3 px-5 py-4 h-full bg-info-light border-2 border-pencil transition-all duration-100 hover:translate-x-[2px] hover:translate-y-[2px] cursor-pointer group"
               style={{
                 borderRadius: radius.md,
                 boxShadow: shadows.md,
@@ -311,7 +311,7 @@ export default function DashboardPage() {
                 (e.currentTarget as HTMLDivElement).style.boxShadow = shadows.md;
               }}
             >
-              <ShieldCheck size={22} strokeWidth={2.5} className="text-blue" />
+              <ShieldCheck size={22} strokeWidth={2.5} className="text-blue group-hover:animate-pulse" />
               <div className="flex-1">
                 <p className="font-medium text-pencil">
                   Security Audit
@@ -324,7 +324,7 @@ export default function DashboardPage() {
 
           <Link to="/skills" className="h-full">
             <div
-              className="flex items-center gap-3 px-5 py-4 h-full bg-success-light border-2 border-pencil transition-all duration-100 hover:translate-x-[2px] hover:translate-y-[2px] cursor-pointer"
+              className="flex items-center gap-3 px-5 py-4 h-full bg-success-light border-2 border-pencil transition-all duration-100 hover:translate-x-[2px] hover:translate-y-[2px] cursor-pointer group"
               style={{
                 borderRadius: radius.md,
                 boxShadow: shadows.md,
@@ -336,7 +336,7 @@ export default function DashboardPage() {
                 (e.currentTarget as HTMLDivElement).style.boxShadow = shadows.md;
               }}
             >
-              <Puzzle size={22} strokeWidth={2.5} className="text-success" />
+              <Puzzle size={22} strokeWidth={2.5} className="text-success group-hover:animate-bounce" />
               <div className="flex-1">
                 <p className="font-medium text-pencil">
                   Browse Skills
@@ -353,7 +353,7 @@ export default function DashboardPage() {
             className="text-left w-full h-full"
           >
             <div
-              className="flex items-center gap-3 px-5 py-4 h-full bg-warning-light border-2 border-pencil transition-all duration-100 hover:translate-x-[2px] hover:translate-y-[2px] cursor-pointer"
+              className="flex items-center gap-3 px-5 py-4 h-full bg-warning-light border-2 border-pencil transition-all duration-100 hover:translate-x-[2px] hover:translate-y-[2px] cursor-pointer group"
               style={{
                 borderRadius: radius.md,
                 boxShadow: shadows.md,
@@ -369,7 +369,7 @@ export default function DashboardPage() {
               <Download
                 size={22}
                 strokeWidth={2.5}
-                className={`text-warning ${updatingAll ? 'animate-bounce' : ''}`}
+                className={`text-warning ${updatingAll ? 'animate-bounce' : 'group-hover:animate-bounce'}`}
               />
               <div className="flex-1">
                 <p className="font-medium text-pencil">

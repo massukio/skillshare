@@ -123,15 +123,16 @@ export function Select({ label, value, onChange, options, className = '', size =
         onClick={() => { if (!disabled) { setOpen(!open); setFocusIdx(options.findIndex((o) => o.value === value)); } }}
         onKeyDown={handleKeyDown}
         className={`
+          ss-select
           w-full bg-surface border text-pencil text-left
           flex items-center justify-between gap-2
           focus:outline-none focus:ring-2 focus:ring-pencil/10 focus:border-pencil-light
           transition-all duration-150
+          rounded-[var(--radius-sm)]
           ${disabled ? 'opacity-50 cursor-not-allowed' : 'cursor-pointer'}
           ${selectTriggerSizes[size]}
           ${open ? 'border-pencil-light shadow-md' : 'border-muted hover:border-muted-dark'}
         `}
-        style={{ borderRadius: radius.sm }}
         role="combobox"
         aria-expanded={open}
         aria-haspopup="listbox"

@@ -27,9 +27,29 @@ import PageHeader from '../components/PageHeader';
 import SegmentedControl from '../components/SegmentedControl';
 import Pagination from '../components/Pagination';
 import { api, type Skill } from '../api/client';
-import { radius, shadows } from '../design';
+import { radius } from '../design';
 import ScrollToTop from '../components/ScrollToTop';
 import Tooltip from '../components/Tooltip';
+
+/* -- Sticky-note pastel palette (8 colors) --------- */
+
+const SKILL_PASTELS = [
+  '#fff9c4', '#dceefb', '#fce4ec', '#e0f2e1',
+  '#f3e5f5', '#fff3e0', '#e0f7fa', '#fbe9e7',
+];
+const SKILL_PASTELS_DARK = [
+  'rgba(255,249,196,0.08)', 'rgba(220,238,251,0.08)',
+  'rgba(252,228,236,0.08)', 'rgba(224,242,225,0.08)',
+  'rgba(243,229,245,0.08)', 'rgba(255,243,224,0.08)',
+  'rgba(224,247,250,0.08)', 'rgba(251,233,231,0.08)',
+];
+
+/** Deterministic hash → palette index. Same string always maps to same color. */
+function hashToIndex(s: string, len: number): number {
+  let h = 0;
+  for (let i = 0; i < s.length; i++) h = ((h << 5) - h + s.charCodeAt(i)) | 0;
+  return ((h % len) + len) % len;
+}
 
 /** Extract owner/repo from a GitHub URL, e.g. "https://github.com/foo/bar" → "foo/bar" */
 function shortSource(source: string): string {
@@ -139,21 +159,24 @@ const SkillPostit = memo(function SkillPostit({
   skill,
 }: {
   skill: Skill;
-  index?: number;
 }) {
   // Extract repo name from relPath (e.g., "_awesome-skillshare-skills/frontend-dugong" -> "awesome-skillshare-skills")
   const repoName = skill.isInRepo && skill.relPath.startsWith('_')
     ? skill.relPath.split('/')[0].slice(1).replace(/__/g, '/')
     : undefined;
 
+  // Color key: tracked skills from the same repo share a color
+  const colorKey = repoName ?? skill.name;
+  const colorIdx = hashToIndex(colorKey, SKILL_PASTELS.length);
+
   return (
     <Link to={`/skills/${encodeURIComponent(skill.flatName)}`} className="w-full">
       <div
-        className="relative p-5 pb-4 border-2 border-muted bg-surface cursor-pointer transition-all duration-150 hover:border-pencil-light hover:shadow-md"
+        className="ss-card ss-skill-card relative p-5 pb-4 bg-surface cursor-pointer border border-muted shadow-sm rounded-[var(--radius-md)] transition-all duration-150 hover:shadow-hover hover:border-muted-dark"
         style={{
-          borderRadius: radius.md,
-          boxShadow: shadows.sm,
-        }}
+          '--skill-pastel': SKILL_PASTELS[colorIdx],
+          '--skill-pastel-dark': SKILL_PASTELS_DARK[colorIdx],
+        } as React.CSSProperties}
       >
         {/* Skill name row */}
         <div className="flex items-center gap-2 mb-2">
@@ -362,7 +385,6 @@ export default function SkillsPage() {
             label: <span className="inline-flex items-center gap-1.5">{opt.icon}{opt.label}</span>,
             count: filterCounts[opt.key],
           }))}
-          connected
         />
       </div>
 
@@ -401,7 +423,7 @@ export default function SkillsPage() {
               exit: (velocity) => Math.abs(velocity) < 200,
             }}
             itemContent={(index) => (
-              <SkillPostit skill={filtered[index]} index={index} />
+              <SkillPostit skill={filtered[index]} />
             )}
           />
         ) : viewType === 'grouped' ? (

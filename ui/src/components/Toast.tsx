@@ -1,6 +1,6 @@
 import { createContext, useContext, useState, useCallback, useRef, useEffect, type ReactNode } from 'react';
 import { X, CheckCircle, AlertTriangle, XCircle, Info } from 'lucide-react';
-import { radius, shadows } from '../design';
+import { shadows } from '../design';
 
 interface Toast {
   id: number;
@@ -86,12 +86,13 @@ function ToastItem({
   return (
     <div
       className={`
+        ss-toast
         relative flex items-start gap-3 px-4 py-3 border-2 text-base overflow-hidden
+        rounded-[var(--radius-sm)]
         ${exiting ? 'animate-toast-out' : 'animate-fade-in'}
         ${typeStyles[t.type]}
       `}
       style={{
-        borderRadius: radius.sm,
         boxShadow: shadows.md,
       }}
       onMouseEnter={() => { setPaused(true); pauseTimer(); }}

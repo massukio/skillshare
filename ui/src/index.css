@@ -38,6 +38,13 @@
   --shadow-accent: 0 2px 6px rgba(220, 69, 56, 0.15);
   --shadow-blue: 0 2px 6px rgba(45, 93, 161, 0.15);
 
+  /* Border radius tokens */
+  --radius-sm: 4px;
+  --radius-md: 8px;
+  --radius-lg: 12px;
+  --radius-btn: 9999px;
+  --radius-full: 9999px;
+
 }
 
 /* Dark theme overrides */
@@ -71,6 +78,455 @@
   --shadow-accent: 0 2px 6px rgba(232, 86, 74, 0.3);
   --shadow-blue: 0 2px 6px rgba(0, 0, 0, 0.3);
 
+}
+
+/* ═══════════════════════════════════════════
+   Playful (Hand-Drawn) theme
+   ═══════════════════════════════════════════ */
+
+[data-theme="playful"] {
+  /* Font override — only headings use Caveat, body stays DM Sans */
+  --font-heading: 'Caveat', 'DM Sans', sans-serif;
+  /* --font-hand is NOT overridden — body text remains DM Sans for readability */
+
+  /* Radius overrides — larger, softer */
+  --radius-sm: 12px;
+  --radius-md: 20px;
+  --radius-lg: 28px;
+
+  /* Shadow overrides — hard offset, no blur */
+  --shadow-sm: 2px 2px 0 var(--color-shadow);
+  --shadow-md: 3px 3px 0 var(--color-shadow);
+  --shadow-lg: 4px 4px 0 var(--color-shadow);
+  --shadow-hover: 4px 4px 0 var(--color-shadow);
+  --shadow-accent: 3px 3px 0 rgba(220, 69, 56, 0.3);
+  --shadow-blue: 3px 3px 0 rgba(45, 93, 161, 0.3);
+
+  /* Shadow color — light mode uses pencil, dark mode overridden below */
+  --color-shadow: var(--color-pencil);
+
+  /* Wobble patterns — matching designprompts.dev/sketch reference
+     Reference uses 255px 15px 225px / 15px 225px 15px 255px for buttons/cards.
+     Dashboard elements use the same extreme values for authentic hand-drawn feel. */
+  --radius-wobble-card:   255px 15px 225px 15px / 15px 225px 15px 255px;
+  --radius-wobble-btn:    255px 15px 225px 15px / 15px 225px 15px 255px;
+  --radius-wobble-badge:  120px 8px 100px 8px   / 8px 100px 8px 120px;
+  --radius-wobble-input:  255px 15px 225px 15px / 15px 225px 15px 255px;
+  --radius-wobble-dialog: 255px 15px 225px 15px / 15px 225px 15px 255px;
+
+  /* Multi-color accent */
+  --accent-1: #dc4538;
+  --accent-2: #2d5da1;
+  --accent-3: #d4870e;
+  --accent-4: #2e8b57;
+
+  /* Heading scale (Caveat renders larger than DM Sans) */
+  --heading-scale: 0.92;
+}
+
+/* Playful Dark — shadow + refinements */
+[data-theme="playful"].dark {
+  --color-shadow: rgba(0, 0, 0, 0.6);
+}
+
+/* ── Playful: Paper Texture (0.8px dots using muted-dark) ── */
+[data-theme="playful"] body {
+  background-image: radial-gradient(var(--color-muted-dark) 0.8px, transparent 0.8px);
+  background-size: 24px 24px;
+}
+[data-theme="playful"].dark body {
+  background-image: radial-gradient(rgba(255,255,255,0.04) 0.8px, transparent 0.8px);
+  background-size: 24px 24px;
+}
+
+/* ── Playful: Heading Scale (scoped to main content, not sidebar) ── */
+[data-theme="playful"] main h1 { font-size: calc(var(--heading-scale) * 2rem); }
+[data-theme="playful"] main h2 { font-size: calc(var(--heading-scale) * 1.5rem); }
+[data-theme="playful"] main h3 { font-size: calc(var(--heading-scale) * 1.25rem); }
+
+/* ── Playful: Card ── */
+[data-theme="playful"] .ss-card {
+  border: 2px solid var(--color-pencil);
+  border-radius: var(--radius-wobble-card);
+  box-shadow: 3px 3px 0 rgba(45, 45, 45, 0.15);
+  transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+}
+/* No rotation — user explicitly requested no tilted cards */
+/* Hover: lift shadow only */
+[data-theme="playful"] .ss-card:hover {
+  box-shadow: 5px 5px 0 rgba(45, 45, 45, 0.2);
+  translate: -1px -1px;
+}
+
+/* ── Playful: Card accent rotation ── */
+[data-theme="playful"] .ss-card:nth-child(4n+1) { --card-accent: var(--accent-1); }
+[data-theme="playful"] .ss-card:nth-child(4n+2) { --card-accent: var(--accent-2); }
+[data-theme="playful"] .ss-card:nth-child(4n+3) { --card-accent: var(--accent-3); }
+[data-theme="playful"] .ss-card:nth-child(4n+4) { --card-accent: var(--accent-4); }
+
+/* ── Playful: Skill Card — Hand-Drawn sticky-note aesthetic ── */
+/*
+ * Bold hand-drawn card style:
+ *  - Thick dark border (2px solid pencil) — pencil outline feel
+ *  - Wobbly border-radius for organic hand-drawn shape
+ *  - Prominent hard offset shadow (NO blur) — classic sketch style
+ *  - Bright pastel background from JS --skill-pastel var
+ *  - Tape strip via ::before (wide, visible, slightly rotated)
+ *  - NO corner peel (::after removed per reference)
+ *  - NO rotation (user explicitly rejected tilted cards)
+ */
+[data-theme="playful"] .ss-skill-card {
+  background: var(--skill-pastel, #fff9c4);
+  border: 2px solid var(--color-pencil) !important;
+  border-radius: 255px 15px 225px 15px / 15px 225px 15px 255px !important;
+  box-shadow: 4px 4px 0 rgba(0, 0, 0, 0.2);
+  position: relative;
+  overflow: visible;
+  margin-top: 18px;
+  transition: box-shadow 0.15s ease, translate 0.15s ease;
+}
+/* Per-card wobble variety — each card gets a unique organic shape */
+[data-theme="playful"] .ss-skill-card:nth-child(6n+1) { border-radius: 225px 12px 245px 18px / 18px 240px 12px 230px !important; }
+[data-theme="playful"] .ss-skill-card:nth-child(6n+2) { border-radius: 240px 20px 210px 10px / 12px 215px 22px 250px !important; }
+[data-theme="playful"] .ss-skill-card:nth-child(6n+3) { border-radius: 215px 8px 255px 14px / 20px 250px 10px 220px !important; }
+[data-theme="playful"] .ss-skill-card:nth-child(6n+4) { border-radius: 250px 18px 220px 12px / 10px 230px 16px 245px !important; }
+[data-theme="playful"] .ss-skill-card:nth-child(6n+5) { border-radius: 230px 10px 240px 22px / 16px 245px 8px 215px !important; }
+/* Hover: lift slightly */
+[data-theme="playful"] .ss-skill-card:hover {
+  box-shadow: 6px 6px 0 rgba(0, 0, 0, 0.22);
+  translate: -1px -1px;
+}
+/* Active: press flat */
+[data-theme="playful"] .ss-skill-card:active {
+  box-shadow: 1px 1px 0 rgba(0, 0, 0, 0.12);
+  translate: 2px 2px;
+}
+/* Dark mode */
+[data-theme="playful"].dark .ss-skill-card {
+  background: var(--skill-pastel-dark, rgba(255,249,196,0.08));
+  border-color: rgba(255, 255, 255, 0.15) !important;
+  box-shadow: 4px 4px 0 rgba(0, 0, 0, 0.5);
+}
+[data-theme="playful"].dark .ss-skill-card:hover {
+  box-shadow: 6px 6px 0 rgba(0, 0, 0, 0.6);
+  border-color: rgba(255, 255, 255, 0.25) !important;
+}
+/* Skill card heading — Caveat hand-drawn font, larger + bolder for impact */
+[data-theme="playful"] .ss-skill-card h3 {
+  font-family: var(--font-heading) !important;
+  font-size: 1.6rem;
+  font-weight: 700;
+  line-height: 1.2;
+}
+/* No ::after corner peel — removed per reference screenshot */
+[data-theme="playful"] .ss-skill-card::after {
+  display: none;
+}
+/*
+ * Tape strip — wide, visible masking tape pinning the note.
+ * Semi-transparent with subtle edge borders for realism.
+ */
+[data-theme="playful"] .ss-skill-card::before {
+  content: '';
+  position: absolute;
+  top: -11px;
+  left: 50%;
+  transform: translateX(-50%) rotate(-2deg);
+  width: 80px;
+  height: 24px;
+  /* Semi-transparent tape — warm-tinted like real masking tape */
+  background: rgba(215, 210, 190, 0.6);
+  /* Slightly irregular edges for torn-tape feel */
+  border-radius: 2px 3px 3px 1px;
+  border-top: 1px solid rgba(190, 185, 165, 0.4);
+  border-bottom: 1px solid rgba(190, 185, 165, 0.3);
+  box-shadow: 1px 1px 0 rgba(0, 0, 0, 0.08);
+  pointer-events: none;
+  z-index: 2;
+}
+/* Tape position/rotation variety — each card gets unique placement */
+[data-theme="playful"] .ss-skill-card:nth-child(6n+1)::before { left: 36%; transform: translateX(-50%) rotate(-3.5deg); width: 76px; }
+[data-theme="playful"] .ss-skill-card:nth-child(6n+2)::before { left: 58%; transform: translateX(-50%) rotate(2.5deg); width: 84px; }
+[data-theme="playful"] .ss-skill-card:nth-child(6n+3)::before { left: 42%; transform: translateX(-50%) rotate(-1deg); width: 78px; }
+[data-theme="playful"] .ss-skill-card:nth-child(6n+4)::before { left: 62%; transform: translateX(-50%) rotate(3.5deg); width: 74px; }
+[data-theme="playful"] .ss-skill-card:nth-child(6n+5)::before { left: 32%; transform: translateX(-50%) rotate(-2.5deg); width: 82px; }
+[data-theme="playful"] .ss-skill-card:nth-child(6n+6)::before { left: 52%; transform: translateX(-50%) rotate(1deg); width: 76px; }
+
+/* ── Playful: Button ── */
+[data-theme="playful"] .ss-btn {
+  border: 3px solid var(--color-pencil);
+  border-radius: var(--radius-wobble-btn);
+  box-shadow: 4px 4px 0 var(--color-shadow);
+  transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+}
+[data-theme="playful"] .ss-btn:hover {
+  box-shadow: 2px 2px 0 var(--color-shadow);
+  translate: 2px 2px;
+}
+[data-theme="playful"] .ss-btn:active {
+  box-shadow: none;
+  translate: 4px 4px;
+}
+
+/* ── Playful: Badge ── */
+[data-theme="playful"] .ss-badge {
+  border: 1.5px solid var(--color-pencil);
+  border-radius: var(--radius-wobble-badge);
+  box-shadow: 1.5px 1.5px 0 var(--color-shadow);
+}
+
+/* ── Playful: Input / Textarea ── */
+[data-theme="playful"] .ss-input {
+  border: 2px solid var(--color-pencil);
+  border-radius: var(--radius-wobble-input);
+}
+[data-theme="playful"] .ss-input:focus {
+  border-style: dashed;
+  box-shadow: 2px 2px 0 var(--color-shadow);
+}
+
+/* ── Playful: Select trigger ── */
+[data-theme="playful"] .ss-select {
+  border: 2px solid var(--color-pencil);
+  border-radius: var(--radius-wobble-input);
+  box-shadow: 2px 2px 0 var(--color-shadow);
+}
+
+/* ── Playful: Dialog ── */
+[data-theme="playful"] .ss-dialog {
+  border: 2px solid var(--color-pencil);
+  border-radius: var(--radius-wobble-dialog);
+  box-shadow: 4px 4px 0 var(--color-shadow);
+}
+[data-theme="playful"] .ss-dialog-backdrop {
+  backdrop-filter: none;
+  background: rgba(0, 0, 0, 0.3);
+}
+
+/* ── Playful: Toast ── */
+[data-theme="playful"] .ss-toast {
+  border: 2px solid var(--color-pencil);
+  border-radius: var(--radius-wobble-card);
+  box-shadow: 3px 3px 0 var(--color-shadow);
+}
+
+/* ── Playful: Tooltip ── */
+[data-theme="playful"] .ss-tooltip {
+  border: 1.5px solid var(--color-pencil);
+  border-radius: var(--radius-wobble-badge);
+  box-shadow: 2px 2px 0 var(--color-shadow);
+}
+
+/* ── Playful: Sidebar ── */
+[data-theme="playful"] aside {
+  border-right: 2px dashed var(--color-muted-dark);
+}
+/* Sidebar "skillshare" heading uses Caveat in playful mode */
+[data-theme="playful"] aside h1 {
+  font-family: var(--font-heading) !important;
+  font-size: 2rem;
+  font-weight: 700;
+  letter-spacing: -0.01em;
+}
+/* "Web Dashboard" subtitle — hand-drawn Caveat + wavy underline */
+[data-theme="playful"] aside h1 + div > p {
+  font-family: var(--font-heading) !important;
+  font-size: 0.95rem;
+  text-decoration: underline;
+  text-decoration-style: wavy;
+  text-decoration-color: var(--color-muted-dark);
+  text-underline-offset: 4px;
+  text-decoration-thickness: 1.5px;
+}
+/* Section group headers — Caveat headings, lighter than nav items */
+[data-theme="playful"] aside nav > div > div:first-child {
+  font-family: var(--font-heading) !important;
+  font-size: 0.85rem;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  color: var(--color-muted-dark);
+}
+/* Sidebar nav items — keep DM Sans for readability, wobbly shape + interactive hover */
+[data-theme="playful"] aside nav a {
+  border-radius: var(--radius-wobble-badge) !important;
+  transition: all 0.1s ease;
+}
+/* Nav item hover — slight lift + tiny shadow for sketch personality */
+[data-theme="playful"] aside nav a:hover {
+  box-shadow: 2px 2px 0 rgba(0, 0, 0, 0.06);
+  translate: -1px -1px;
+}
+/* Active sidebar link — dashed pencil border + accent highlight + hard shadow */
+[data-theme="playful"] aside a[aria-current="page"] {
+  border-left: 3px dashed var(--color-accent) !important;
+  background: var(--color-accent-light) !important;
+  box-shadow: 2px 2px 0 rgba(220, 69, 56, 0.12);
+  font-weight: 700 !important;
+}
+/* Active link should not translate on hover — already "pinned" */
+[data-theme="playful"] aside a[aria-current="page"]:hover {
+  translate: none;
+  box-shadow: 2px 2px 0 rgba(220, 69, 56, 0.12);
+}
+
+/* ── Playful: Sidebar bottom section ── */
+/* Dashed top border to match sidebar's dashed right edge */
+[data-theme="playful"] aside > div:last-child {
+  border-top: 1.5px dashed var(--color-muted-dark) !important;
+}
+[data-theme="playful"] aside button {
+  border-radius: var(--radius-wobble-badge) !important;
+  transition: all 0.1s ease;
+}
+/* Bottom buttons hover — same lift micro-interaction as nav items */
+[data-theme="playful"] aside button:hover {
+  box-shadow: 2px 2px 0 rgba(0, 0, 0, 0.06);
+  translate: -1px -1px;
+}
+/* Logo section bottom border — dashed to match */
+[data-theme="playful"] aside > div:first-child {
+  border-bottom: 1.5px dashed var(--color-muted-dark) !important;
+}
+
+/* ── Playful: ShortcutHUD (⌘ S toast) ── */
+[data-theme="playful"] .ss-shortcut-hud {
+  border-radius: 200px 12px 180px 12px / 12px 180px 12px 200px !important;
+  box-shadow: 3px 3px 0 rgba(0, 0, 0, 0.15) !important;
+}
+
+/* ── Playful: SegmentedControl (non-connected = filter tabs) ── */
+/*
+ * Filter tabs get wobbly pill borders per item.
+ * Active tab: filled dark bg + white text + hard offset shadow.
+ * Inactive: transparent with pencil border.
+ */
+[data-theme="playful"] .ss-segmented:not(.ss-segmented-connected) .ss-segmented-item {
+  border-width: 2px !important;
+  border-color: var(--color-muted-dark) !important;
+  border-radius: var(--radius-wobble-badge) !important;
+  transition: all 0.15s ease;
+}
+[data-theme="playful"] .ss-segmented:not(.ss-segmented-connected) .ss-segmented-item[aria-pressed="true"] {
+  background: var(--color-pencil) !important;
+  color: var(--color-paper) !important;
+  border-color: var(--color-pencil) !important;
+  box-shadow: 3px 3px 0 var(--color-pencil) !important;
+  border-radius: var(--radius-wobble-badge) !important;
+}
+[data-theme="playful"] .ss-segmented:not(.ss-segmented-connected) .ss-segmented-item[aria-pressed="false"] {
+  border-color: var(--color-muted-dark) !important;
+}
+[data-theme="playful"] .ss-segmented:not(.ss-segmented-connected) .ss-segmented-item[aria-pressed="false"]:hover {
+  border-color: var(--color-pencil) !important;
+  box-shadow: 2px 2px 0 rgba(45, 45, 45, 0.15);
+}
+
+/* ── Playful: SegmentedControl (connected = view switcher) ── */
+/*
+ * Container gets wobbly inset border.
+ * Active button gets wobbly shape with white fill.
+ */
+[data-theme="playful"] .ss-segmented-connected {
+  border: 2px solid var(--color-pencil) !important;
+  border-radius: var(--radius-wobble-badge) !important;
+  background: var(--color-muted) !important;
+  box-shadow: 2px 2px 0 rgba(45, 45, 45, 0.12);
+}
+[data-theme="playful"] .ss-segmented-connected .ss-segmented-item {
+  border-radius: 80px 6px 70px 6px / 6px 70px 6px 80px !important;
+  transition: all 0.15s ease;
+}
+[data-theme="playful"] .ss-segmented-connected .ss-segmented-item[aria-pressed="true"] {
+  background: var(--color-surface) !important;
+  border: 2px solid var(--color-pencil) !important;
+  box-shadow: 2px 2px 0 rgba(45, 45, 45, 0.1);
+}
+
+/* ── Playful: Links ── */
+[data-theme="playful"] a:not(.ss-btn):not([class*="nav"]) {
+  text-decoration-style: wavy;
+  text-underline-offset: 4px;
+}
+/* link-subtle uses border-bottom normally — in playful, replace with wavy underline */
+[data-theme="playful"] .link-subtle {
+  border-bottom: none !important;
+  text-decoration: underline;
+  text-decoration-style: wavy;
+  text-underline-offset: 4px;
+}
+[data-theme="playful"] .link-subtle:hover {
+  border-bottom: none !important;
+}
+
+/* ── Playful: Scrollbar ── */
+[data-theme="playful"] ::-webkit-scrollbar-thumb {
+  border-radius: 8px;
+  border: 2px solid var(--color-paper);
+}
+
+/* ── Playful: Prose overrides ── */
+[data-theme="playful"] .prose-hand h1,
+[data-theme="playful"] .prose-hand h2,
+[data-theme="playful"] .prose-hand h3,
+[data-theme="playful"] .prose-hand h4 {
+  font-family: var(--font-heading);
+  font-weight: 700;
+}
+[data-theme="playful"] .prose-hand h1 { font-size: 2rem; }
+[data-theme="playful"] .prose-hand h2 { font-size: 1.6rem; }
+[data-theme="playful"] .prose-hand h3 { font-size: 1.35rem; }
+[data-theme="playful"] .prose-hand h4 { font-size: 1.15rem; }
+[data-theme="playful"] .prose-hand blockquote {
+  border-left-width: 3px;
+  border-style: dashed;
+}
+
+/* ── Playful Dark: refinements ── */
+[data-theme="playful"].dark .ss-card,
+[data-theme="playful"].dark .ss-btn,
+[data-theme="playful"].dark .ss-input,
+[data-theme="playful"].dark .ss-select,
+[data-theme="playful"].dark .ss-dialog,
+[data-theme="playful"].dark .ss-toast {
+  border-width: 2px;
+}
+[data-theme="playful"].dark .ss-card {
+  box-shadow: 3px 3px 0 var(--color-shadow);
+}
+[data-theme="playful"].dark .ss-card:hover {
+  box-shadow: 5px 5px 0 var(--color-shadow);
+}
+[data-theme="playful"].dark .ss-btn {
+  box-shadow: 3px 3px 0 var(--color-shadow);
+}
+[data-theme="playful"].dark aside nav a:hover {
+  box-shadow: 2px 2px 0 rgba(0, 0, 0, 0.2);
+}
+[data-theme="playful"].dark aside button:hover {
+  box-shadow: 2px 2px 0 rgba(0, 0, 0, 0.2);
+}
+
+/* ── prefers-reduced-motion ── */
+@media (prefers-reduced-motion: reduce) {
+  [data-theme="playful"] .ss-card:hover { translate: none; }
+  [data-theme="playful"] .ss-skill-card::before { transform: translateX(-50%); }
+  [data-theme="playful"] aside nav a:hover { translate: none; }
+  [data-theme="playful"] aside button:hover { translate: none; }
+}
+
+/* ── Theme transition (user-initiated only) ── */
+html.theme-transitioning,
+html.theme-transitioning > body,
+html.theme-transitioning aside,
+html.theme-transitioning main,
+html.theme-transitioning .ss-card,
+html.theme-transitioning .ss-btn,
+html.theme-transitioning .ss-badge,
+html.theme-transitioning .ss-input,
+html.theme-transitioning .ss-select,
+html.theme-transitioning .ss-dialog {
+  transition: background-color 0.2s ease, border-color 0.2s ease,
+              box-shadow 0.2s ease, color 0.2s ease, border-radius 0.2s ease;
 }
 
 /* Promote toast z-index during tour so it's visible above overlay */

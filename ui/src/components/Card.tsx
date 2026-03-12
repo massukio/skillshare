@@ -1,5 +1,5 @@
 import type { ReactNode, CSSProperties } from 'react';
-import { radius, shadows } from '../design';
+import { shadows } from '../design';
 
 interface CardProps {
   children: ReactNode;
@@ -10,6 +10,7 @@ interface CardProps {
   tilt?: boolean;
   padding?: 'none' | 'sm' | 'md';
   style?: CSSProperties;
+  skillCard?: boolean;
 }
 
 const variantStyles = {
@@ -39,20 +40,23 @@ export default function Card({
   tilt = false,
   padding = 'md',
   style,
+  skillCard = false,
 }: CardProps) {
   return (
     <div
       className={`
+        ss-card
+        ${skillCard ? 'ss-skill-card' : ''}
         relative ${paddingClasses[padding]}
         ${overflow ? 'overflow-visible' : 'overflow-hidden'}
         transition-all duration-150
+        rounded-[var(--radius-md)]
         ${variantStyles[variant]}
         ${hover ? 'cursor-pointer hover:shadow-md hover:translate-y-[-1px]' : ''}
         ${tilt ? 'card-tilt' : ''}
         ${className}
       `}
       style={{
-        borderRadius: radius.md,
         boxShadow: variantShadows[variant],
         ...style,
       }}

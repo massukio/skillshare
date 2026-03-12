@@ -5,18 +5,18 @@
  * for inline styles where Tailwind classes aren't sufficient.
  */
 
-/** Standard border-radius values */
+/** Standard border-radius values (resolve via CSS custom properties for theme override) */
 export const radius = {
   /** Small elements — badges, chips */
-  sm: '4px',
+  sm: 'var(--radius-sm)',
   /** Medium elements — cards, containers */
-  md: '8px',
+  md: 'var(--radius-md)',
   /** Large elements — modals, panels */
-  lg: '12px',
+  lg: 'var(--radius-lg)',
   /** Buttons — pill shape */
-  btn: '9999px',
+  btn: 'var(--radius-btn)',
   /** Full round — avatars, pills */
-  full: '9999px',
+  full: 'var(--radius-full)',
 } as const;
 
 /** Shadow presets (mirrors CSS variables for inline use) */
