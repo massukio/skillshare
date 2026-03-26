@@ -70,7 +70,7 @@ skillshare collect --all
 # Find original sources from skill metadata
 cat ~/.config/skillshare/skills/pdf/.skillshare-meta.json
 # or check the registry
-cat ~/.config/skillshare/registry.yaml
+cat ~/.config/skillshare/skills/registry.yaml
 
 # Reinstall
 skillshare install anthropics/skills/skills/pdf

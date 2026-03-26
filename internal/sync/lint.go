@@ -24,13 +24,13 @@ const (
 
 // Lint check types (match YAML check field values).
 const (
-	checkFieldEmpty      = "field-empty"
-	checkBodyEmpty       = "body-empty"
-	checkFieldLengthMin  = "field-length-min"
-	checkFieldLengthMax  = "field-length-max"
+	checkFieldEmpty       = "field-empty"
+	checkBodyEmpty        = "body-empty"
+	checkFieldLengthMin   = "field-length-min"
+	checkFieldLengthMax   = "field-length-max"
 	checkFieldLengthRange = "field-length-range"
-	checkFieldNotMatches = "field-not-matches"
-	checkFieldMatches    = "field-matches"
+	checkFieldNotMatches  = "field-not-matches"
+	checkFieldMatches     = "field-matches"
 )
 
 // LintIssue represents a single lint finding for a skill.

@@ -7,7 +7,6 @@ import (
 	"path/filepath"
 	"strings"
 	"time"
-
 )
 
 // SkillSourceURL is the raw URL to the official skillshare skill's SKILL.md.

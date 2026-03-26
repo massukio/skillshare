@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://raw.githubusercontent.com/runkids/skillshare/main/schemas/registry.schema.json",
   "title": "Skillshare Registry",
-  "description": "Skill registry for skillshare — tracks installed/tracked skills. Location: ~/.config/skillshare/registry.yaml (global) or .skillshare/registry.yaml (project). Auto-managed by reconciliation; manual edits are preserved.",
+  "description": "Skill registry for skillshare — tracks installed/tracked skills. Location: ~/.config/skillshare/skills/registry.yaml (global) or .skillshare/registry.yaml (project). Auto-managed by reconciliation; manual edits are preserved.",
   "type": "object",
   "additionalProperties": false,
   "properties": {
