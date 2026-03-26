@@ -112,7 +112,7 @@ func TestUpdate_Prune_RegistryCleanup(t *testing.T) {
 	result.AssertSuccess(t)
 
 	// Check registry does not contain the stale skill
-	regPath := filepath.Join(filepath.Dir(sb.ConfigPath), "registry.yaml")
+	regPath := filepath.Join(sb.SourcePath, "registry.yaml")
 	if _, err := os.Stat(regPath); err == nil {
 		regContent := sb.ReadFile(regPath)
 		if contains(regContent, staleName) {
@@ -168,7 +168,7 @@ func TestUpdate_Prune_AllStale(t *testing.T) {
 	}
 
 	// Registry should not contain either
-	regPath := filepath.Join(filepath.Dir(sb.ConfigPath), "registry.yaml")
+	regPath := filepath.Join(sb.SourcePath, "registry.yaml")
 	if _, err := os.Stat(regPath); err == nil {
 		regContent := sb.ReadFile(regPath)
 		for _, name := range []string{"alpha", "beta"} {
@@ -277,7 +277,7 @@ func TestUpdate_Prune_NestedIntoSkill(t *testing.T) {
 	}
 
 	// Registry should not contain stale-nested
-	regPath := filepath.Join(filepath.Dir(sb.ConfigPath), "registry.yaml")
+	regPath := filepath.Join(sb.SourcePath, "registry.yaml")
 	if _, err := os.Stat(regPath); err == nil {
 		regContent := sb.ReadFile(regPath)
 		if contains(regContent, "stale-nested") {

@@ -434,7 +434,7 @@ skills:
 	}
 
 	// Registry should no longer contain mygroup skills
-	registryPath := filepath.Join(filepath.Dir(sb.ConfigPath), "registry.yaml")
+	registryPath := filepath.Join(sb.SourcePath, "registry.yaml")
 	registryContent := sb.ReadFile(registryPath)
 	if strings.Contains(registryContent, "skill-a") {
 		t.Error("registry should not contain skill-a after group uninstall")
@@ -503,7 +503,7 @@ skills:
 	result := sb.RunCLI("uninstall", "security/", "-f")
 	result.AssertSuccess(t)
 
-	registryPath := filepath.Join(filepath.Dir(sb.ConfigPath), "registry.yaml")
+	registryPath := filepath.Join(sb.SourcePath, "registry.yaml")
 	registryContent := sb.ReadFile(registryPath)
 	if strings.Contains(registryContent, "scan") {
 		t.Error("registry should not contain scan after security/ uninstall")
@@ -547,7 +547,7 @@ skills:
 	}
 
 	// Registry skills should be cleared
-	registryPath := filepath.Join(filepath.Dir(sb.ConfigPath), "registry.yaml")
+	registryPath := filepath.Join(sb.SourcePath, "registry.yaml")
 	registryContent := sb.ReadFile(registryPath)
 	if strings.Contains(registryContent, "alpha") || strings.Contains(registryContent, "beta") || strings.Contains(registryContent, "gamma") {
 		t.Error("registry should not contain any skills after --all uninstall")

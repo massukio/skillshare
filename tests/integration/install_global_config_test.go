@@ -53,7 +53,7 @@ func TestInstall_Global_FromConfig_DryRun_TrackedRespectsQuiet(t *testing.T) {
 targets: {}
 `)
 
-	registryPath := filepath.Join(filepath.Dir(sb.ConfigPath), "registry.yaml")
+	registryPath := filepath.Join(sb.SourcePath, "registry.yaml")
 	if err := os.WriteFile(registryPath, []byte(`skills:
   - name: dryrun-track
     source: file://`+repoPath+`
@@ -136,7 +136,7 @@ targets: {}
 	result.AssertSuccess(t)
 
 	// Read registry.yaml (skills are stored here, not in config.yaml)
-	registryPath := filepath.Join(filepath.Dir(sb.ConfigPath), "registry.yaml")
+	registryPath := filepath.Join(sb.SourcePath, "registry.yaml")
 	data, err := os.ReadFile(registryPath)
 	if err != nil {
 		t.Fatalf("expected registry.yaml after install: %v", err)

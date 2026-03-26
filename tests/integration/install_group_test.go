@@ -34,7 +34,7 @@ targets: {}
 	}
 
 	// Read registry and verify group field
-	registryPath := filepath.Join(filepath.Dir(sb.ConfigPath), "registry.yaml")
+	registryPath := filepath.Join(sb.SourcePath, "registry.yaml")
 	registryContent := sb.ReadFile(registryPath)
 	if !strings.Contains(registryContent, "group: frontend") {
 		t.Errorf("registry should contain 'group: frontend', got:\n%s", registryContent)
@@ -65,7 +65,7 @@ targets: {}
 	result.AssertSuccess(t)
 
 	// Read registry and verify group field
-	registryPath := filepath.Join(filepath.Dir(sb.ConfigPath), "registry.yaml")
+	registryPath := filepath.Join(sb.SourcePath, "registry.yaml")
 	registryContent := sb.ReadFile(registryPath)
 	if !strings.Contains(registryContent, "group: frontend/vue") {
 		t.Errorf("registry should contain 'group: frontend/vue', got:\n%s", registryContent)
