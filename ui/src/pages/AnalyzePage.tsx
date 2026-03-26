@@ -650,7 +650,7 @@ function SkillTable({
       <FilteredSummaryBar filtered={filtered} total={skills.length} />
 
       {/* Table */}
-      <div className="overflow-auto max-h-[calc(100vh-320px)]">
+      <div className="overflow-auto min-h-[420px] max-h-[calc(100vh-320px)]">
         <table className="w-full text-left table-fixed">
           <colgroup>
             <col />
