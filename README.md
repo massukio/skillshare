@@ -214,6 +214,7 @@ Thanks to everyone who helped shape skillshare.
 <a href="https://github.com/thealokkr"><img src="https://github.com/thealokkr.png" width="50" style="border-radius:50%" alt="thealokkr"></a>
 <a href="https://github.com/JasonLandbridge"><img src="https://github.com/JasonLandbridge.png" width="50" style="border-radius:50%" alt="JasonLandbridge"></a>
 <a href="https://github.com/masonc15"><img src="https://github.com/masonc15.png" width="50" style="border-radius:50%" alt="masonc15"></a>
+<a href="https://github.com/richardwhatever"><img src="https://github.com/richardwhatever.png" width="50" style="border-radius:50%" alt="richardwhatever"></a>
 <a href="https://github.com/reneleonhardt"><img src="https://github.com/reneleonhardt.png" width="50" style="border-radius:50%" alt="reneleonhardt"></a>
 <a href="https://github.com/ndeybach"><img src="https://github.com/ndeybach.png" width="50" style="border-radius:50%" alt="ndeybach"></a>
 <a href="https://github.com/salmonumbrella"><img src="https://github.com/salmonumbrella.png" width="50" style="border-radius:50%" alt="salmonumbrella"></a>
