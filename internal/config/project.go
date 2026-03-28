@@ -282,7 +282,7 @@ func LoadProject(projectRoot string) (*ProjectConfig, error) {
 		}
 	}
 	if migrated {
-		if mdata, merr := yaml.Marshal(&cfg); merr == nil {
+		if mdata, merr := marshalYAML(&cfg); merr == nil {
 			tmpPath := path + ".tmp"
 			if writeErr := os.WriteFile(tmpPath, append(projectSchemaComment, mdata...), 0644); writeErr == nil {
 				os.Rename(tmpPath, path)
@@ -301,7 +301,7 @@ func (c *ProjectConfig) Save(projectRoot string) error {
 		return fmt.Errorf("failed to create project config directory: %w", err)
 	}
 
-	data, err := yaml.Marshal(c)
+	data, err := marshalYAML(c)
 	if err != nil {
 		return fmt.Errorf("failed to marshal project config: %w", err)
 	}
@@ -352,7 +352,7 @@ func migrateProjectSkillsToRegistry(configPath, projectRoot string) error {
 		return nil
 	}
 	delete(raw, "skills")
-	cleaned, err := yaml.Marshal(raw)
+	cleaned, err := marshalYAML(raw)
 	if err != nil {
 		return nil
 	}

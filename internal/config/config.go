@@ -1,6 +1,7 @@
 package config
 
 import (
+	"bytes"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -11,6 +12,17 @@ import (
 	"gopkg.in/yaml.v3"
 	"skillshare/internal/utils"
 )
+
+// marshalYAML marshals v with 2-space indentation (Go yaml default is 4).
+func marshalYAML(v any) ([]byte, error) {
+	var buf bytes.Buffer
+	enc := yaml.NewEncoder(&buf)
+	enc.SetIndent(2)
+	if err := enc.Encode(v); err != nil {
+		return nil, err
+	}
+	return buf.Bytes(), nil
+}
 
 // ValidSyncModes lists all valid sync mode values.
 var ValidSyncModes = []string{"merge", "symlink", "copy"}
@@ -330,7 +342,7 @@ func Load() (*Config, error) {
 
 	// Migrate legacy flat target fields to skills: sub-key (one-time, persisted immediately)
 	if migrateTargetConfigs(cfg.Targets) {
-		if data, err := yaml.Marshal(&cfg); err == nil {
+		if data, err := marshalYAML(&cfg); err == nil {
 			tmpPath := path + ".tmp"
 			if writeErr := os.WriteFile(tmpPath, append(schemaComment, data...), 0644); writeErr == nil {
 				os.Rename(tmpPath, path)
@@ -385,7 +397,7 @@ func (c *Config) Save() error {
 		return fmt.Errorf("failed to create config directory: %w", err)
 	}
 
-	data, err := yaml.Marshal(c)
+	data, err := marshalYAML(c)
 	if err != nil {
 		return fmt.Errorf("failed to marshal config: %w", err)
 	}
@@ -457,7 +469,7 @@ func migrateSkillsToRegistry(configPath string) error {
 		return nil
 	}
 	delete(raw, "skills")
-	cleaned, err := yaml.Marshal(raw)
+	cleaned, err := marshalYAML(raw)
 	if err != nil {
 		return nil
 	}

@@ -113,7 +113,7 @@ func (r *Registry) Save(dir string) error {
 		return fmt.Errorf("failed to create registry directory: %w", err)
 	}
 
-	data, err := yaml.Marshal(r)
+	data, err := marshalYAML(r)
 	if err != nil {
 		return fmt.Errorf("failed to marshal registry: %w", err)
 	}
