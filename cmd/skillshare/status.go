@@ -222,6 +222,20 @@ func printSourceStatus(cfg *config.Config, skillCount int, stats *skillignore.Ig
 
 	ui.Success("%s (%d skills, %s)", cfg.Source, skillCount, info.ModTime().Format("2006-01-02 15:04"))
 	printSkillignoreLine(stats)
+
+	// Agents source
+	agentsSource := cfg.EffectiveAgentsSource()
+	if agentsInfo, agentsErr := os.Stat(agentsSource); agentsErr == nil {
+		agentCount := 0
+		if entries, readErr := os.ReadDir(agentsSource); readErr == nil {
+			for _, e := range entries {
+				if !e.IsDir() && strings.HasSuffix(strings.ToLower(e.Name()), ".md") {
+					agentCount++
+				}
+			}
+		}
+		ui.Success("%s (%d agents, %s)", agentsSource, agentCount, agentsInfo.ModTime().Format("2006-01-02 15:04"))
+	}
 }
 
 func printSkillignoreLine(stats *skillignore.IgnoreStats) {

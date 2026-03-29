@@ -220,6 +220,7 @@ func runDoctorChecks(cfg *config.Config, result *doctorResult, isProject bool) {
 	sp.Stop()
 
 	checkSource(cfg, result, discovered, discoverErr)
+	checkAgentsSource(cfg, result)
 	checkSkillignore(result, stats)
 	checkSymlinkSupport(result)
 
@@ -301,6 +302,39 @@ func checkSource(cfg *config.Config, result *doctorResult, discovered []sync.Dis
 	}
 	ui.Success("Source: %s (%d skills)", cfg.Source, skillCount)
 	result.addCheck("source", checkPass, fmt.Sprintf("Source: %s (%d skills)", cfg.Source, skillCount), nil)
+}
+
+func checkAgentsSource(cfg *config.Config, result *doctorResult) {
+	agentsSource := cfg.EffectiveAgentsSource()
+	info, err := os.Stat(agentsSource)
+	if err != nil {
+		if os.IsNotExist(err) {
+			ui.Info("Agents source: %s (not created yet)", agentsSource)
+			result.addCheck("agents_source", checkPass, fmt.Sprintf("Agents source: %s (not created yet)", agentsSource), nil)
+			return
+		}
+		ui.Error("Agents source error: %s", err)
+		result.addError()
+		result.addCheck("agents_source", checkError, fmt.Sprintf("Agents source error: %v", err), nil)
+		return
+	}
+
+	if !info.IsDir() {
+		ui.Error("Agents source is not a directory: %s", agentsSource)
+		result.addError()
+		result.addCheck("agents_source", checkError, fmt.Sprintf("Agents source is not a directory: %s", agentsSource), nil)
+		return
+	}
+
+	agentCount := 0
+	entries, _ := os.ReadDir(agentsSource)
+	for _, e := range entries {
+		if !e.IsDir() && strings.HasSuffix(strings.ToLower(e.Name()), ".md") {
+			agentCount++
+		}
+	}
+	ui.Success("Agents source: %s (%d agents)", agentsSource, agentCount)
+	result.addCheck("agents_source", checkPass, fmt.Sprintf("Agents source: %s (%d agents)", agentsSource, agentCount), nil)
 }
 
 func checkSymlinkSupport(result *doctorResult) {

@@ -10,6 +10,7 @@ import (
 
 type trashItemJSON struct {
 	Name      string `json:"name"`
+	Kind      string `json:"kind,omitempty"`
 	Timestamp string `json:"timestamp"`
 	Date      string `json:"date"`
 	Size      int64  `json:"size"`
@@ -24,18 +25,40 @@ func (s *Server) trashBase() string {
 	return trash.TrashDir()
 }
 
+// agentTrashBase returns the agent trash directory for the current mode.
+func (s *Server) agentTrashBase() string {
+	if s.IsProjectMode() {
+		return trash.ProjectAgentTrashDir(s.projectRoot)
+	}
+	return trash.AgentTrashDir()
+}
+
 // handleListTrash returns all trashed items with total size.
 func (s *Server) handleListTrash(w http.ResponseWriter, r *http.Request) {
 	// Snapshot config under RLock, then release before I/O.
 	s.mu.RLock()
 	base := s.trashBase()
+	agentBase := s.agentTrashBase()
 	s.mu.RUnlock()
-	items := trash.List(base)
 
-	out := make([]trashItemJSON, 0, len(items))
+	items := trash.List(base)
+	agentItems := trash.List(agentBase)
+
+	out := make([]trashItemJSON, 0, len(items)+len(agentItems))
 	for _, item := range items {
 		out = append(out, trashItemJSON{
 			Name:      item.Name,
+			Kind:      "skill",
+			Timestamp: item.Timestamp,
+			Date:      item.Date.Format("2006-01-02T15:04:05Z07:00"),
+			Size:      item.Size,
+			Path:      item.Path,
+		})
+	}
+	for _, item := range agentItems {
+		out = append(out, trashItemJSON{
+			Name:      item.Name,
+			Kind:      "agent",
 			Timestamp: item.Timestamp,
 			Date:      item.Date.Format("2006-01-02T15:04:05Z07:00"),
 			Size:      item.Size,
@@ -43,9 +66,10 @@ func (s *Server) handleListTrash(w http.ResponseWriter, r *http.Request) {
 		})
 	}
 
+	totalSize := trash.TotalSize(base) + trash.TotalSize(agentBase)
 	writeJSON(w, map[string]any{
 		"items":     out,
-		"totalSize": trash.TotalSize(base),
+		"totalSize": totalSize,
 	})
 }
 
