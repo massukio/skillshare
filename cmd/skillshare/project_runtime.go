@@ -7,11 +7,12 @@ import (
 )
 
 type projectRuntime struct {
-	root       string
-	config     *config.ProjectConfig
-	registry   *config.Registry
-	sourcePath string
-	targets    map[string]config.TargetConfig
+	root             string
+	config           *config.ProjectConfig
+	registry         *config.Registry
+	sourcePath       string
+	agentsSourcePath string
+	targets          map[string]config.TargetConfig
 }
 
 func loadProjectRuntime(root string) (*projectRuntime, error) {
@@ -31,10 +32,11 @@ func loadProjectRuntime(root string) (*projectRuntime, error) {
 	}
 
 	return &projectRuntime{
-		root:       root,
-		config:     cfg,
-		registry:   reg,
-		sourcePath: filepath.Join(root, ".skillshare", "skills"),
-		targets:    targets,
+		root:             root,
+		config:           cfg,
+		registry:         reg,
+		sourcePath:       filepath.Join(root, ".skillshare", "skills"),
+		agentsSourcePath: filepath.Join(root, ".skillshare", "agents"),
+		targets:          targets,
 	}, nil
 }

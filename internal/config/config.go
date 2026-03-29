@@ -216,6 +216,7 @@ type ExtraConfig struct {
 // Config holds the application configuration
 type Config struct {
 	Source       string                  `yaml:"source"`
+	AgentsSource string                  `yaml:"agents_source,omitempty"`
 	ExtrasSource string                  `yaml:"extras_source,omitempty"`
 	Mode         string                  `yaml:"mode,omitempty"` // default mode: merge
 	TargetNaming string                  `yaml:"target_naming,omitempty"`
@@ -231,6 +232,15 @@ type Config struct {
 	// RegistryDir is the resolved directory for registry.yaml (cached SourceRoot result).
 	// Set during Load(), not serialized to YAML.
 	RegistryDir string `yaml:"-"`
+}
+
+// EffectiveAgentsSource returns the agents source directory.
+// Defaults to <BaseDir>/agents if not explicitly configured.
+func (c *Config) EffectiveAgentsSource() string {
+	if c.AgentsSource != "" {
+		return ExpandPath(c.AgentsSource)
+	}
+	return filepath.Join(BaseDir(), "agents")
 }
 
 // EffectiveGitLabHosts returns GitLabHosts merged with SKILLSHARE_GITLAB_HOSTS env var.

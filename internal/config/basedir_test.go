@@ -48,6 +48,26 @@ func TestConfigPath_RespectsXDGConfigHome(t *testing.T) {
 	}
 }
 
+func TestEffectiveAgentsSource_Default(t *testing.T) {
+	t.Setenv("XDG_CONFIG_HOME", "")
+	cfg := &Config{}
+
+	got := cfg.EffectiveAgentsSource()
+	want := filepath.Join(BaseDir(), "agents")
+	if got != want {
+		t.Errorf("EffectiveAgentsSource() = %q, want %q", got, want)
+	}
+}
+
+func TestEffectiveAgentsSource_Explicit(t *testing.T) {
+	cfg := &Config{AgentsSource: "/custom/agents"}
+
+	got := cfg.EffectiveAgentsSource()
+	if got != "/custom/agents" {
+		t.Errorf("EffectiveAgentsSource() = %q, want %q", got, "/custom/agents")
+	}
+}
+
 func TestConfigPath_SKILLSHARECONFIGTakesPriority(t *testing.T) {
 	t.Setenv("SKILLSHARE_CONFIG", "/override/config.yaml")
 	t.Setenv("XDG_CONFIG_HOME", "/custom/config")
