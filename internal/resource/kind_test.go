@@ -298,6 +298,29 @@ func TestAgentKind_Discover_EmptyDir(t *testing.T) {
 	}
 }
 
+func TestAgentKind_Discover_RespectsAgentignore(t *testing.T) {
+	dir := t.TempDir()
+
+	os.WriteFile(filepath.Join(dir, "active.md"), []byte("# Active"), 0o644)
+	os.WriteFile(filepath.Join(dir, "ignored.md"), []byte("# Ignored"), 0o644)
+
+	// Create .agentignore
+	os.WriteFile(filepath.Join(dir, ".agentignore"), []byte("ignored.md\n"), 0o644)
+
+	k := AgentKind{}
+	resources, err := k.Discover(dir)
+	if err != nil {
+		t.Fatalf("Discover error: %v", err)
+	}
+
+	if len(resources) != 1 {
+		t.Fatalf("expected 1 resource (ignored filtered out), got %d", len(resources))
+	}
+	if resources[0].Name != "active" {
+		t.Errorf("Name = %q, want %q", resources[0].Name, "active")
+	}
+}
+
 func TestAgentKind_Discover_SkipsGitDir(t *testing.T) {
 	dir := t.TempDir()
 

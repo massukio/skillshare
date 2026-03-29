@@ -5,6 +5,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"skillshare/internal/skillignore"
 	"skillshare/internal/utils"
 )
 
@@ -20,6 +21,9 @@ func (AgentKind) Kind() string { return "agent" }
 func (AgentKind) Discover(sourceDir string) ([]DiscoveredResource, error) {
 	walkRoot := utils.ResolveSymlink(sourceDir)
 
+	// Read .agentignore for filtering
+	ignoreMatcher := skillignore.ReadAgentIgnoreMatcher(walkRoot)
+
 	var resources []DiscoveredResource
 
 	err := filepath.Walk(walkRoot, func(path string, info os.FileInfo, err error) error {
@@ -30,6 +34,16 @@ func (AgentKind) Discover(sourceDir string) ([]DiscoveredResource, error) {
 		if info.IsDir() {
 			if info.Name() == ".git" || utils.IsHidden(info.Name()) && info.Name() != "." {
 				return filepath.SkipDir
+			}
+			// Skip ignored directories early
+			if ignoreMatcher.HasRules() && info.Name() != "." {
+				relDir, relErr := filepath.Rel(walkRoot, path)
+				if relErr == nil {
+					relDir = strings.ReplaceAll(relDir, "\\", "/")
+					if ignoreMatcher.CanSkipDir(relDir) {
+						return filepath.SkipDir
+					}
+				}
 			}
 			return nil
 		}
@@ -54,6 +68,11 @@ func (AgentKind) Discover(sourceDir string) ([]DiscoveredResource, error) {
 			return nil
 		}
 		relPath = strings.ReplaceAll(relPath, "\\", "/")
+
+		// Apply .agentignore matching
+		if ignoreMatcher.HasRules() && ignoreMatcher.Match(relPath, false) {
+			return nil
+		}
 
 		name := agentNameFromFile(path, info.Name())
 
