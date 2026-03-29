@@ -28,6 +28,7 @@ type updateResultItem struct {
 	IsRepo         bool   `json:"isRepo"`
 	AuditRiskScore int    `json:"auditRiskScore,omitempty"`
 	AuditRiskLabel string `json:"auditRiskLabel,omitempty"`
+	Kind           string `json:"kind,omitempty"`
 }
 
 func (s *Server) updateAuditThreshold() string {

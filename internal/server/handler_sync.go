@@ -181,6 +181,7 @@ type diffItem struct {
 	Skill  string `json:"skill"`
 	Action string `json:"action"` // "link", "update", "skip", "prune", "local"
 	Reason string `json:"reason"` // human-readable description
+	Kind   string `json:"kind,omitempty"`
 }
 
 type diffTarget struct {

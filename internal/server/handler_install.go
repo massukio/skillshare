@@ -91,6 +91,7 @@ func (s *Server) handleInstallBatch(w http.ResponseWriter, r *http.Request) {
 		SkipAudit bool   `json:"skipAudit"`
 		Into      string `json:"into"`
 		Name      string `json:"name"`
+		Kind      string `json:"kind,omitempty"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid JSON body")
@@ -251,6 +252,7 @@ func (s *Server) handleInstall(w http.ResponseWriter, r *http.Request) {
 		SkipAudit bool   `json:"skipAudit"`
 		Track     bool   `json:"track"`
 		Into      string `json:"into"`
+		Kind      string `json:"kind,omitempty"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid JSON body")

@@ -40,6 +40,7 @@ type auditResultResponse struct {
 	AuditableBytes int64                  `json:"auditableBytes"`
 	Analyzability  float64                `json:"analyzability"`
 	TierProfile    audit.TierProfile      `json:"tierProfile"`
+	Kind           string                 `json:"kind,omitempty"`
 }
 
 type auditSummary struct {

@@ -23,6 +23,7 @@ type skillCheckResult struct {
 	Version     string `json:"version"`
 	Status      string `json:"status"`
 	InstalledAt string `json:"installed_at,omitempty"`
+	Kind        string `json:"kind,omitempty"`
 }
 
 func (s *Server) handleCheck(w http.ResponseWriter, r *http.Request) {
