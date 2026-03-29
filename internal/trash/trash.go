@@ -24,6 +24,54 @@ func ProjectTrashDir(root string) string {
 	return filepath.Join(root, ".skillshare", "trash")
 }
 
+// AgentTrashDir returns the global trash directory for agents.
+func AgentTrashDir() string {
+	return filepath.Join(config.DataDir(), "trash", "agents")
+}
+
+// ProjectAgentTrashDir returns the project-level trash directory for agents.
+func ProjectAgentTrashDir(root string) string {
+	return filepath.Join(root, ".skillshare", "trash", "agents")
+}
+
+// MoveAgentToTrash moves an agent file (and its metadata) to the trash directory.
+func MoveAgentToTrash(agentFile, metaFile, name, trashBase string) (string, error) {
+	timestamp := time.Now().Format("2006-01-02_15-04-05")
+	trashDir := filepath.Join(trashBase, name+"_"+timestamp)
+
+	if err := os.MkdirAll(trashDir, 0755); err != nil {
+		return "", fmt.Errorf("failed to create agent trash dir: %w", err)
+	}
+
+	// Move agent .md file
+	destFile := filepath.Join(trashDir, filepath.Base(agentFile))
+	if err := os.Rename(agentFile, destFile); err != nil {
+		// Fallback: copy then delete
+		data, readErr := os.ReadFile(agentFile)
+		if readErr != nil {
+			return "", fmt.Errorf("failed to read agent for trash: %w", readErr)
+		}
+		if writeErr := os.WriteFile(destFile, data, 0644); writeErr != nil {
+			return "", fmt.Errorf("failed to write agent to trash: %w", writeErr)
+		}
+		os.Remove(agentFile)
+	}
+
+	// Move metadata if exists
+	if metaFile != "" {
+		if _, err := os.Stat(metaFile); err == nil {
+			destMeta := filepath.Join(trashDir, filepath.Base(metaFile))
+			if err := os.Rename(metaFile, destMeta); err != nil {
+				data, _ := os.ReadFile(metaFile)
+				os.WriteFile(destMeta, data, 0644)
+				os.Remove(metaFile)
+			}
+		}
+	}
+
+	return trashDir, nil
+}
+
 // TrashEntry holds information about a trashed item.
 type TrashEntry struct {
 	Name      string    // Original skill name
