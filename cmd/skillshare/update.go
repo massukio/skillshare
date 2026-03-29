@@ -130,6 +130,10 @@ func cmdUpdate(args []string) error {
 
 	applyModeLabel(mode)
 
+	// Extract kind filter (e.g. "skillshare update agents")
+	kind, rest := parseKindArg(rest)
+	_ = kind // TODO: wire agent-only update path
+
 	if mode == modeProject {
 		// Parse opts for logging (cmdUpdateProject parses again internally)
 		projOpts, _, _ := parseUpdateArgs(rest)

@@ -45,6 +45,7 @@ type diffJSONTarget struct {
 type diffJSONItem struct {
 	Action string `json:"action"`
 	Name   string `json:"name"`
+	Kind   string `json:"kind,omitempty"` // "skill" or "agent"
 	Reason string `json:"reason"`
 	IsSync bool   `json:"is_sync"`
 }
