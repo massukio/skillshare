@@ -667,9 +667,17 @@ export interface DiscoveredSkill {
   kind?: 'skill' | 'agent';
 }
 
+export interface DiscoveredAgent {
+  name: string;
+  path: string;
+  fileName: string;
+  kind: 'agent';
+}
+
 export interface DiscoverResult {
   needsSelection: boolean;
   skills: DiscoveredSkill[];
+  agents: DiscoveredAgent[];
 }
 
 export interface BatchInstallResultItem {

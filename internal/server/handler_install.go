@@ -65,12 +65,18 @@ func (s *Server) handleDiscover(w http.ResponseWriter, r *http.Request) {
 
 	skills := make([]map[string]string, len(discovery.Skills))
 	for i, sk := range discovery.Skills {
-		skills[i] = map[string]string{"name": sk.Name, "path": sk.Path, "description": sk.Description}
+		skills[i] = map[string]string{"name": sk.Name, "path": sk.Path, "description": sk.Description, "kind": "skill"}
+	}
+
+	agents := make([]map[string]string, len(discovery.Agents))
+	for i, ag := range discovery.Agents {
+		agents[i] = map[string]string{"name": ag.Name, "path": ag.Path, "fileName": ag.FileName, "kind": "agent"}
 	}
 
 	writeJSON(w, map[string]any{
-		"needsSelection": len(discovery.Skills) > 1,
+		"needsSelection": len(discovery.Skills) > 1 || len(discovery.Agents) > 0,
 		"skills":         skills,
+		"agents":         agents,
 	})
 }
 
