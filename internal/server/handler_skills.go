@@ -1,6 +1,7 @@
 package server
 
 import (
+	"encoding/json"
 	"fmt"
 	"log"
 	"net/http"
@@ -76,7 +77,7 @@ func (s *Server) handleListSkills(w http.ResponseWriter, r *http.Request) {
 			}
 
 			if meta, _ := install.ReadMeta(d.SourcePath); meta != nil {
-				item.InstalledAt = meta.InstalledAt.Format("2006-01-02T15:04:05Z")
+				item.InstalledAt = meta.InstalledAt.Format(time.RFC3339)
 				item.Source = meta.Source
 				item.Type = meta.Type
 				item.RepoURL = meta.RepoURL
@@ -107,14 +108,17 @@ func (s *Server) handleListSkills(w http.ResponseWriter, r *http.Request) {
 				SourcePath: agentPath,
 			}
 
-			// Check for agent metadata
+			// Check for agent metadata (agent meta is a standalone file, not inside a dir)
 			metaPath := filepath.Join(agentsSource, agentName+".skillshare-meta.json")
-			if meta, _ := install.ReadMeta(metaPath); meta != nil {
-				item.InstalledAt = meta.InstalledAt.Format("2006-01-02T15:04:05Z")
-				item.Source = meta.Source
-				item.Type = meta.Type
-				item.RepoURL = meta.RepoURL
-				item.Version = meta.Version
+			if metaData, readErr := os.ReadFile(metaPath); readErr == nil {
+				var meta install.SkillMeta
+				if json.Unmarshal(metaData, &meta) == nil {
+					item.InstalledAt = meta.InstalledAt.Format(time.RFC3339)
+					item.Source = meta.Source
+					item.Type = meta.Type
+					item.RepoURL = meta.RepoURL
+					item.Version = meta.Version
+				}
 			}
 
 			items = append(items, item)
@@ -202,24 +206,28 @@ func (s *Server) handleGetSkill(w http.ResponseWriter, r *http.Request) {
 
 	// Fallback: check agents source
 	if agentsSource != "" {
-		agentFile := name + ".md"
+		agentName := strings.TrimSuffix(name, ".md")
+		agentFile := agentName + ".md"
 		agentPath := filepath.Join(agentsSource, agentFile)
 		if data, err := os.ReadFile(agentPath); err == nil {
 			item := skillItem{
-				Name:       name,
+				Name:       agentName,
 				Kind:       "agent",
 				FlatName:   agentFile,
 				RelPath:    agentFile,
 				SourcePath: agentPath,
 			}
 
-			metaPath := filepath.Join(agentsSource, name+".skillshare-meta.json")
-			if meta, _ := install.ReadMeta(metaPath); meta != nil {
-				item.InstalledAt = meta.InstalledAt.Format("2006-01-02T15:04:05Z")
-				item.Source = meta.Source
-				item.Type = meta.Type
-				item.RepoURL = meta.RepoURL
-				item.Version = meta.Version
+			metaFilePath := filepath.Join(agentsSource, agentName+".skillshare-meta.json")
+			if metaData, readErr := os.ReadFile(metaFilePath); readErr == nil {
+				var meta install.SkillMeta
+				if json.Unmarshal(metaData, &meta) == nil {
+					item.InstalledAt = meta.InstalledAt.Format(time.RFC3339)
+					item.Source = meta.Source
+					item.Type = meta.Type
+					item.RepoURL = meta.RepoURL
+					item.Version = meta.Version
+				}
 			}
 
 			writeJSON(w, map[string]any{

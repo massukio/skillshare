@@ -26,6 +26,7 @@ import {
   X,
   Bot,
   Layers,
+  FileText,
 } from 'lucide-react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { VirtuosoGrid, Virtuoso } from 'react-virtuoso';
@@ -605,7 +606,9 @@ const SkillPostit = memo(function SkillPostit({
           <div className="shrink-0">
             {skill.isInRepo
               ? <GitBranch size={18} strokeWidth={2.5} className="text-pencil-light" />
-              : <Folder size={18} strokeWidth={2.5} className="text-pencil-light" />
+              : skill.kind === 'agent'
+                ? <FileText size={18} strokeWidth={2.5} className="text-pencil-light" />
+                : <Folder size={18} strokeWidth={2.5} className="text-pencil-light" />
             }
           </div>
           <h3 className="font-bold text-pencil text-lg truncate leading-tight flex items-center gap-1.5">
