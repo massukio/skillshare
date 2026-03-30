@@ -1362,7 +1362,7 @@ function FolderTreeView({ skills, totalCount, isSearching, stickyTop = 0, onClea
               )}
             </>
           ) : (
-            <>{activeItems.length} {activeTab === 'agents' ? 'agent' : 'skill'}{activeItems.length !== 1 ? 's' : ''} in {folderCount} folder{folderCount !== 1 ? 's' : ''}</>
+            <>{skills.length} item{skills.length !== 1 ? 's' : ''} in {folderCount} folder{folderCount !== 1 ? 's' : ''}</>
           )}
         </span>
         {folderCount > 1 && (
