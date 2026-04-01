@@ -48,6 +48,11 @@ func (r *doctorResult) addInfo(name, message string) {
 }
 
 func cmdDoctor(args []string) error {
+	if wantsHelp(args) {
+		printDoctorHelp()
+		return nil
+	}
+
 	mode, rest, err := parseModeArgs(args)
 	if err != nil {
 		return err
@@ -1118,4 +1123,21 @@ func printUpdateAvailable(result *versioncheck.CheckResult) {
 	}
 	ui.Info("Update available: %s -> %s", result.CurrentVersion, result.LatestVersion)
 	ui.Info("  Run: %s", result.InstallMethod.UpgradeCommand())
+}
+
+func printDoctorHelp() {
+	fmt.Println(`Usage: skillshare doctor [options]
+
+Check environment and diagnose issues.
+
+Options:
+  --json            Output results as JSON
+  --project, -p     Use project-level config
+  --global, -g      Use global config
+  --help, -h        Show this help
+
+Examples:
+  skillshare doctor              Run diagnostics
+  skillshare doctor --json       Output as JSON
+  skillshare doctor -p           Check project config`)
 }

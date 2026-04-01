@@ -56,6 +56,11 @@ type syncModeStats struct {
 }
 
 func cmdSync(args []string) error {
+	if wantsHelp(args) {
+		printSyncHelp()
+		return nil
+	}
+
 	// Subcommand: sync extras
 	if len(args) > 0 && args[0] == "extras" {
 		return cmdSyncExtras(args[1:])
@@ -754,4 +759,28 @@ func syncSymlinkMode(name string, target config.TargetConfig, source string, dry
 	}
 
 	return nil
+}
+
+func printSyncHelp() {
+	fmt.Println(`Usage: skillshare sync [options]
+
+Sync skills from source to all configured targets.
+
+Options:
+  --all             Sync skills and extras
+  --dry-run, -n     Preview changes without applying
+  --force, -f       Force sync (overwrite local changes)
+  --json            Output results as JSON
+  --project, -p     Use project-level config
+  --global, -g      Use global config
+  --help, -h        Show this help
+
+Subcommands:
+  extras            Sync only extras (see: skillshare sync extras --help)
+
+Examples:
+  skillshare sync                Sync skills to all targets
+  skillshare sync --dry-run      Preview sync changes
+  skillshare sync --all          Sync skills and extras
+  skillshare sync -p             Sync project-level skills`)
 }
