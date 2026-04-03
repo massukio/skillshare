@@ -216,18 +216,53 @@ func (s *Server) handleUninstallRepo(w http.ResponseWriter, r *http.Request) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	name := r.PathValue("name")
-
-	// Normalize: ensure _ prefix
-	repoName := name
-	if !strings.HasPrefix(repoName, "_") {
-		repoName = "_" + name
-	}
-	repoPath := filepath.Join(s.cfg.Source, repoName)
-
-	if !install.IsGitRepo(repoPath) {
-		writeError(w, http.StatusBadRequest, "not a tracked repository: "+name)
+	name := strings.TrimSpace(r.PathValue("name"))
+	if name == "" {
+		writeError(w, http.StatusBadRequest, "tracked repository name is required")
 		return
+	}
+
+	resolveRepo := func(input string) (string, string) {
+		candidates := []string{input}
+		if !strings.HasPrefix(filepath.Base(input), "_") {
+			if dir := filepath.Dir(input); dir != "." && dir != "" {
+				candidates = append(candidates, filepath.Join(dir, "_"+filepath.Base(input)))
+			} else {
+				candidates = append(candidates, "_"+input)
+			}
+		}
+		for _, candidate := range candidates {
+			repoPath := filepath.Join(s.cfg.Source, candidate)
+			if install.IsGitRepo(repoPath) {
+				return candidate, repoPath
+			}
+		}
+		return "", ""
+	}
+
+	repoName, repoPath := resolveRepo(name)
+	if repoPath == "" {
+		// Fallback: match nested tracked repos by basename.
+		matches := make([]string, 0, 2)
+		repos, _ := install.GetTrackedRepos(s.cfg.Source)
+		for _, repo := range repos {
+			base := filepath.Base(repo)
+			trimmed := strings.TrimPrefix(base, "_")
+			if base == name || trimmed == name {
+				matches = append(matches, repo)
+			}
+		}
+		switch len(matches) {
+		case 0:
+			writeError(w, http.StatusBadRequest, "not a tracked repository: "+name)
+			return
+		case 1:
+			repoName = matches[0]
+			repoPath = filepath.Join(s.cfg.Source, repoName)
+		default:
+			writeError(w, http.StatusBadRequest, "multiple tracked repositories match: "+name+" — use the full path")
+			return
+		}
 	}
 
 	// Remove from .gitignore
