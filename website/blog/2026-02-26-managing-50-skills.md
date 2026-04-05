@@ -56,11 +56,14 @@ Global config targets use a map format:
 ```yaml
 targets:
   claude:
-    path: ~/.claude/skills
+    skills:
+      path: ~/.claude/skills
   cursor:
-    path: ~/.cursor/skills
+    skills:
+      path: ~/.cursor/skills
   codex:
-    path: ~/.codex/skills
+    skills:
+      path: ~/.codex/skills
 ```
 
 One `skillshare sync` pushes all 50+ skills to all three tools simultaneously. Each target gets per-skill symlinks, so tool-specific local skills remain untouched.
@@ -72,18 +75,21 @@ You can set a different sync mode per target, and use `include`/`exclude` patter
 ```yaml
 targets:
   claude:
-    path: ~/.claude/skills
-    mode: merge
+    skills:
+      path: ~/.claude/skills
+      mode: merge
   cursor:
-    path: ~/.cursor/skills
-    mode: copy          # copy mode for better compatibility
-    exclude:
-      - "_experimental*"
+    skills:
+      path: ~/.cursor/skills
+      mode: copy          # copy mode for better compatibility
+      exclude:
+        - "_experimental*"
   codex:
-    path: ~/.codex/skills
-    mode: merge
-    include:
-      - "coding-*"
+    skills:
+      path: ~/.codex/skills
+      mode: merge
+      include:
+        - "coding-*"
 ```
 
 ## Daily Workflow

@@ -159,14 +159,16 @@ In your config, use `include`/`exclude` patterns to control which skills each ta
 ```yaml
 targets:
   claude:
-    path: ~/.claude/skills
-    exclude:
-      - "experimental-*"
+    skills:
+      path: ~/.claude/skills
+      exclude:
+        - "experimental-*"
   cursor:
-    path: ~/.cursor/skills
-    include:
-      - "coding-*"
-      - "review-*"
+    skills:
+      path: ~/.cursor/skills
+      include:
+        - "coding-*"
+        - "review-*"
 ```
 
 ### `.skillignore` for repositories
