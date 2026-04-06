@@ -3,6 +3,7 @@ package main
 import (
 	"fmt"
 	"os"
+	"path/filepath"
 	"time"
 
 	"skillshare/internal/config"
@@ -124,6 +125,113 @@ func resolveAgentTargetPath(tc config.TargetConfig, builtinAgents map[string]con
 		return config.ExpandPath(builtin.Path)
 	}
 	return ""
+}
+
+// syncAgentsProject syncs agents for project mode using .skillshare/agents/ as source
+// and project-level target agent paths.
+func syncAgentsProject(projectRoot string, dryRun, force, jsonOutput bool, start time.Time) error {
+	agentsSource := filepath.Join(projectRoot, ".skillshare", "agents")
+
+	if _, err := os.Stat(agentsSource); err != nil {
+		if os.IsNotExist(err) {
+			if !jsonOutput {
+				ui.Info("No project agents directory (%s)", agentsSource)
+			}
+			return nil
+		}
+		return fmt.Errorf("cannot access project agents: %w", err)
+	}
+
+	agents, err := resource.AgentKind{}.Discover(agentsSource)
+	if err != nil {
+		return fmt.Errorf("cannot discover project agents: %w", err)
+	}
+
+	if len(agents) == 0 {
+		if !jsonOutput {
+			ui.Info("No project agents found")
+		}
+		return nil
+	}
+
+	if !jsonOutput {
+		ui.Header("Syncing project agents")
+		if dryRun {
+			ui.Warning("Dry run mode - no changes will be made")
+		}
+	}
+
+	builtinAgents := config.ProjectAgentTargets()
+	var totals agentSyncStats
+	var syncErr error
+
+	// Load project config for target list
+	projCfg, loadErr := config.LoadProject(projectRoot)
+	if loadErr != nil {
+		return fmt.Errorf("cannot load project config: %w", loadErr)
+	}
+
+	for _, entry := range projCfg.Targets {
+		var agentPath string
+		ac := entry.AgentsConfig()
+		if ac.Path != "" {
+			agentPath = ac.Path
+			if !filepath.IsAbs(agentPath) {
+				agentPath = filepath.Join(projectRoot, agentPath)
+			}
+		} else if builtin, ok := builtinAgents[entry.Name]; ok {
+			agentPath = config.ExpandPath(builtin.Path)
+		}
+		if agentPath == "" {
+			continue
+		}
+
+		mode := ac.Mode
+		if mode == "" {
+			mode = "merge"
+		}
+
+		result, syncResultErr := sync.SyncAgents(agents, agentsSource, agentPath, mode, dryRun, force)
+		if syncResultErr != nil {
+			if !jsonOutput {
+				ui.Error("%s: agent sync failed: %v", entry.Name, syncResultErr)
+			}
+			syncErr = fmt.Errorf("some agent targets failed to sync")
+			continue
+		}
+
+		var pruned []string
+		switch mode {
+		case "copy":
+			pruned, _ = sync.PruneOrphanAgentCopies(agentPath, agents, dryRun)
+		case "merge":
+			pruned, _ = sync.PruneOrphanAgentLinks(agentPath, agents, dryRun)
+		}
+
+		stats := agentSyncStats{
+			linked:  len(result.Linked),
+			skipped: len(result.Skipped),
+			updated: len(result.Updated),
+			pruned:  len(pruned),
+		}
+		totals.linked += stats.linked
+		totals.skipped += stats.skipped
+		totals.updated += stats.updated
+		totals.pruned += stats.pruned
+
+		if !jsonOutput {
+			reportAgentSyncResult(entry.Name, mode, stats, dryRun)
+		}
+	}
+
+	if !jsonOutput {
+		fmt.Println()
+		ui.Info("Project agent sync: %d linked, %d local, %d updated, %d pruned (%s)",
+			totals.linked, totals.skipped, totals.updated, totals.pruned,
+			formatDuration(start))
+	}
+
+	return syncErr
 }
 
 // reportAgentSyncResult prints per-target agent sync status.

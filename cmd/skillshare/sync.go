@@ -114,6 +114,11 @@ func cmdSync(args []string) error {
 	}
 
 	if mode == modeProject {
+		// Agent-only project sync
+		if kind == kindAgents {
+			return syncAgentsProject(cwd, dryRun, force, jsonOutput, start)
+		}
+
 		if hasAll && !jsonOutput {
 			// Run project extras sync after project skills sync (text mode)
 			defer func() {
@@ -123,9 +128,18 @@ func cmdSync(args []string) error {
 				}
 			}()
 		}
+
 		stats, results, projIgnoreStats, err := cmdSyncProject(cwd, dryRun, force, jsonOutput)
 		stats.ProjectScope = true
 		logSyncOp(config.ProjectConfigPath(cwd), stats, start, err)
+
+		// Append agent sync when kind=all
+		if kind == kindAll {
+			if agentErr := syncAgentsProject(cwd, dryRun, force, jsonOutput, start); agentErr != nil && err == nil {
+				err = agentErr
+			}
+		}
+
 		if jsonOutput {
 			if hasAll {
 				projCfg, loadErr := config.LoadProject(cwd)

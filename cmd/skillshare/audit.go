@@ -183,6 +183,9 @@ func cmdAudit(args []string) error {
 			cfgPath = config.ConfigPath()
 		}
 	} else if mode == modeProject {
+		if kind == kindAgents {
+			return fmt.Errorf("audit agents is not yet supported in project mode")
+		}
 		rt, err := loadProjectRuntime(cwd)
 		if err != nil {
 			return err

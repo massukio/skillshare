@@ -133,8 +133,11 @@ func cmdUpdate(args []string) error {
 	// Extract kind filter (e.g. "skillshare update agents")
 	kind, rest := parseKindArg(rest)
 
-	// Agent-only update: skip skill update entirely
+	// Agent-only update: dispatch to correct scope
 	if kind == kindAgents {
+		if mode == modeProject {
+			return cmdUpdateAgentsProject(rest, cwd, start)
+		}
 		cfg, loadErr := config.Load()
 		if loadErr != nil {
 			return loadErr

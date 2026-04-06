@@ -272,3 +272,91 @@ func updateAgentsOutputJSON(updatable []check.AgentCheckResult, dryRun bool, sta
 	}
 	return writeJSONResult(&output, err)
 }
+
+// cmdUpdateAgentsProject handles "skillshare update -p agents [name|--all]".
+func cmdUpdateAgentsProject(args []string, projectRoot string, start time.Time) error {
+	agentsDir := filepath.Join(projectRoot, ".skillshare", "agents")
+	if _, err := os.Stat(agentsDir); err != nil {
+		if os.IsNotExist(err) {
+			ui.Info("No project agents directory (%s)", agentsDir)
+			return nil
+		}
+		return fmt.Errorf("cannot access project agents: %w", err)
+	}
+
+	opts, showHelp, parseErr := parseUpdateAgentArgs(args)
+	if showHelp {
+		printUpdateHelp()
+		return nil
+	}
+	if parseErr != nil {
+		return parseErr
+	}
+
+	results := check.CheckAgents(agentsDir)
+	if len(results) == 0 {
+		ui.Info("No project agents found")
+		return nil
+	}
+
+	if len(opts.names) > 0 {
+		results = filterAgentCheckResults(results, opts.names)
+		if len(results) == 0 {
+			return fmt.Errorf("no matching agents found: %s", strings.Join(opts.names, ", "))
+		}
+	}
+
+	var tracked []check.AgentCheckResult
+	for _, r := range results {
+		if r.Source != "" {
+			tracked = append(tracked, r)
+		}
+	}
+
+	if len(tracked) == 0 {
+		ui.Info("No tracked project agents to update (all are local)")
+		return nil
+	}
+
+	sp := ui.StartSpinner(fmt.Sprintf("Checking %d agent(s)...", len(tracked)))
+	check.EnrichAgentResultsWithRemote(tracked, func() { sp.Success("Check complete") })
+
+	var updatable []check.AgentCheckResult
+	for _, r := range tracked {
+		if r.Status == "update_available" {
+			updatable = append(updatable, r)
+		}
+	}
+
+	if len(updatable) == 0 {
+		ui.Success("All project agents are up to date")
+		return nil
+	}
+
+	ui.Header("Updating project agents")
+	if opts.dryRun {
+		ui.Warning("Dry run mode")
+		for _, r := range updatable {
+			ui.Info("  %s: update available from %s", r.Name, r.Source)
+		}
+		return nil
+	}
+
+	var updated, failed int
+	for _, r := range updatable {
+		if err := reinstallAgent(agentsDir, r); err != nil {
+			ui.Error("  %s: %v", r.Name, err)
+			failed++
+		} else {
+			ui.Success("  %s: updated", r.Name)
+			updated++
+		}
+	}
+
+	logUpdateAgentOp(config.ProjectConfigPath(projectRoot), len(updatable), updated, failed, opts.dryRun, start)
+
+	if failed > 0 {
+		return fmt.Errorf("%d agent(s) failed to update", failed)
+	}
+	return nil
+}

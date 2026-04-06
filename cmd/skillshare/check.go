@@ -191,6 +191,9 @@ func cmdCheck(args []string) error {
 	cfgPath := config.ConfigPath()
 	if mode == modeProject {
 		cfgPath = config.ProjectConfigPath(cwd)
+		if kind == kindAgents {
+			return fmt.Errorf("check agents is not yet supported in project mode")
+		}
 		cmdErr := cmdCheckProject(cwd, opts)
 		logCheckOp(cfgPath, 0, 0, 0, 0, scope, start, cmdErr)
 		return cmdErr

@@ -86,6 +86,9 @@ func cmdCollect(args []string) error {
 	kind, rest := parseKindArg(rest)
 
 	if mode == modeProject {
+		if kind == kindAgents {
+			return fmt.Errorf("collect agents is not yet supported in project mode")
+		}
 		err := cmdCollectProject(rest, cwd)
 		logCollectOp(config.ProjectConfigPath(cwd), start, err)
 		return err
