@@ -13,6 +13,7 @@ import (
 	"strings"
 	"testing"
 
+	"skillshare/internal/install"
 	"skillshare/internal/testutil"
 )
 
@@ -875,19 +876,40 @@ func sha256Hex(data []byte) string {
 	return hex.EncodeToString(h[:])
 }
 
-// writeMetaJSON writes a .skillshare-meta.json with the given file_hashes into dir.
-func writeMetaJSON(t *testing.T, dir string, hashes map[string]string) {
+// writeMetaJSON writes file_hashes for a skill into the centralized .metadata.json
+// store in the parent directory of skillDir.
+func writeMetaJSON(t *testing.T, skillDir string, hashes map[string]string) {
 	t.Helper()
-	meta := map[string]any{
+	skillName := filepath.Base(skillDir)
+	parentDir := filepath.Dir(skillDir)
+
+	entry := map[string]any{
 		"source":       "test",
 		"type":         "local",
 		"installed_at": "2026-01-01T00:00:00Z",
 	}
 	if hashes != nil {
-		meta["file_hashes"] = hashes
+		entry["file_hashes"] = hashes
 	}
-	data, _ := json.Marshal(meta)
-	if err := os.WriteFile(filepath.Join(dir, ".skillshare-meta.json"), data, 0644); err != nil {
+	store := map[string]any{
+		"version": 1,
+		"entries": map[string]any{skillName: entry},
+	}
+
+	// Merge with existing store if present
+	existingData, err := os.ReadFile(filepath.Join(parentDir, install.MetadataFileName))
+	if err == nil {
+		var existing map[string]any
+		if json.Unmarshal(existingData, &existing) == nil {
+			if entries, ok := existing["entries"].(map[string]any); ok {
+				entries[skillName] = entry
+				store = existing
+			}
+		}
+	}
+
+	data, _ := json.Marshal(store)
+	if err := os.WriteFile(filepath.Join(parentDir, install.MetadataFileName), data, 0644); err != nil {
 		t.Fatalf("writeMetaJSON: %v", err)
 	}
 }

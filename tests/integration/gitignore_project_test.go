@@ -3,12 +3,12 @@
 package integration
 
 import (
-	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 
+	"skillshare/internal/install"
 	"skillshare/internal/testutil"
 )
 
@@ -37,13 +37,13 @@ func TestGitignoreProject_UninstallRemovesEntry(t *testing.T) {
 	defer sb.Cleanup()
 	projectRoot := sb.SetupProjectDir("claude")
 
-	// Create remote skill with meta
-	skillDir := sb.CreateProjectSkill(projectRoot, "removable", map[string]string{
+	// Create remote skill with meta in centralized store
+	sb.CreateProjectSkill(projectRoot, "removable", map[string]string{
 		"SKILL.md": "# Removable",
 	})
-	meta := map[string]interface{}{"source": "org/removable", "type": "github"}
-	metaJSON, _ := json.Marshal(meta)
-	os.WriteFile(filepath.Join(skillDir, ".skillshare-meta.json"), metaJSON, 0644)
+	skillsDir := filepath.Join(projectRoot, ".skillshare", "skills")
+	metaStore := `{"version":1,"entries":{"removable":{"source":"org/removable","type":"github"}}}`
+	os.WriteFile(filepath.Join(skillsDir, install.MetadataFileName), []byte(metaStore), 0644)
 
 	// Write gitignore with the entry
 	sb.WriteFile(filepath.Join(projectRoot, ".skillshare", ".gitignore"),

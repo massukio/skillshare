@@ -731,19 +731,29 @@ func sha256hex(data []byte) string {
 }
 
 // helper: write meta with file_hashes
-func writeMetaWithHashes(t *testing.T, dir string, hashes map[string]string) {
+// writeMetaWithHashes writes file hashes into the centralized .metadata.json
+// store in the parent directory of skillDir (matching the production layout).
+func writeMetaWithHashes(t *testing.T, skillDir string, hashes map[string]string) {
 	t.Helper()
-	meta := struct {
+	skillName := filepath.Base(skillDir)
+	parentDir := filepath.Dir(skillDir)
+
+	type entry struct {
 		Source     string            `json:"source"`
 		Type       string            `json:"type"`
 		FileHashes map[string]string `json:"file_hashes"`
-	}{
-		Source:     "test",
-		Type:       "local",
-		FileHashes: hashes,
 	}
-	data, _ := json.Marshal(meta)
-	os.WriteFile(filepath.Join(dir, ".skillshare-meta.json"), data, 0644)
+	store := struct {
+		Version int              `json:"version"`
+		Entries map[string]entry `json:"entries"`
+	}{
+		Version: 1,
+		Entries: map[string]entry{
+			skillName: {Source: "test", Type: "local", FileHashes: hashes},
+		},
+	}
+	data, _ := json.Marshal(store)
+	os.WriteFile(filepath.Join(parentDir, metadataFileName), data, 0644)
 }
 
 func TestScanSkill_ContentTampered(t *testing.T) {

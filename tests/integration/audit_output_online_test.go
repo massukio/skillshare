@@ -3,12 +3,11 @@
 package integration
 
 import (
-	"encoding/json"
-	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 
+	"skillshare/internal/install"
 	"skillshare/internal/testutil"
 )
 
@@ -83,39 +82,23 @@ func TestUpdateAll_AuditOutputParity_Antigravity(t *testing.T) {
 	updateResult.AssertOutputNotContains(t, "Blocked / Rolled Back")
 }
 
-// invalidateOneSkillMeta finds the first skill with a .skillshare-meta.json file
-// and sets its "version" to a stale value, forcing the next update to re-install it.
+// invalidateOneSkillMeta finds the first skill with metadata in the centralized
+// store and sets its "version" to a stale value, forcing the next update to re-install it.
 func invalidateOneSkillMeta(t *testing.T, skillsDir string) {
 	t.Helper()
 
-	entries, err := os.ReadDir(skillsDir)
-	if err != nil {
-		t.Fatalf("cannot read skills dir: %v", err)
-	}
-
-	for _, e := range entries {
-		if !e.IsDir() {
+	store := install.LoadMetadataOrNew(skillsDir)
+	for _, name := range store.List() {
+		entry := store.Get(name)
+		if entry == nil || entry.Source == "" {
 			continue
 		}
-		metaPath := filepath.Join(skillsDir, e.Name(), ".skillshare-meta.json")
-		data, err := os.ReadFile(metaPath)
-		if err != nil {
-			continue
+		entry.Version = "stale"
+		entry.TreeHash = ""
+		if err := store.Save(skillsDir); err != nil {
+			t.Fatalf("save store: %v", err)
 		}
-		var meta map[string]any
-		if err := json.Unmarshal(data, &meta); err != nil {
-			continue
-		}
-		meta["version"] = "stale"
-		meta["tree_hash"] = "" // also clear tree hash so subdir fallback won't match
-		out, err := json.MarshalIndent(meta, "", "  ")
-		if err != nil {
-			t.Fatalf("marshal meta: %v", err)
-		}
-		if err := os.WriteFile(metaPath, out, 0644); err != nil {
-			t.Fatalf("write meta: %v", err)
-		}
-		t.Logf("invalidated metadata for skill %q to force re-install", e.Name())
+		t.Logf("invalidated metadata for skill %q to force re-install", name)
 		return
 	}
 

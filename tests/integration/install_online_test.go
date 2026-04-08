@@ -5,9 +5,9 @@ package integration
 import (
 	"os"
 	"path/filepath"
-	"strings"
 	"testing"
 
+	"skillshare/internal/install"
 	"skillshare/internal/testutil"
 )
 
@@ -102,16 +102,19 @@ targets: {}
 		t.Fatalf("did not expect .git directory for subdir API install")
 	}
 
-	metaPath := filepath.Join(skillDir, ".skillshare-meta.json")
-	metaRaw, err := os.ReadFile(metaPath)
-	if err != nil {
-		t.Fatalf("failed to read metadata: %v", err)
+	// Verify metadata in centralized .metadata.json store
+	store, storeErr := install.LoadMetadata(sb.SourcePath)
+	if storeErr != nil {
+		t.Fatalf("failed to load metadata store: %v", storeErr)
 	}
-	meta := string(metaRaw)
-	if !strings.Contains(meta, "\"source\": \"github.com/majiayu000/claude-skill-registry/skills/documents/atlassian-search\"") {
-		t.Fatalf("expected metadata source to preserve subdir source, got: %s", meta)
+	entry := store.Get("atlassian-search")
+	if entry == nil {
+		t.Fatal("expected metadata entry for atlassian-search in centralized store")
 	}
-	if !strings.Contains(meta, "\"subdir\": \"skills/documents/atlassian-search\"") {
-		t.Fatalf("expected metadata subdir to match install path, got: %s", meta)
+	if entry.Source != "github.com/majiayu000/claude-skill-registry/skills/documents/atlassian-search" {
+		t.Fatalf("expected source to preserve subdir, got: %s", entry.Source)
+	}
+	if entry.Subdir != "skills/documents/atlassian-search" {
+		t.Fatalf("expected subdir to match install path, got: %s", entry.Subdir)
 	}
 }

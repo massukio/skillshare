@@ -172,15 +172,16 @@ func TestUninstall_ShowsMetadata(t *testing.T) {
 	sb := testutil.NewSandbox(t)
 	defer sb.Cleanup()
 
-	// Create skill with metadata (simulating installed skill)
+	// Create skill with metadata in centralized store (simulating installed skill)
 	sb.CreateSkill("meta-skill", map[string]string{
 		"SKILL.md": "# Meta Skill",
-		".skillshare-meta.json": `{
-  "source": "github.com/user/repo",
-  "type": "github",
-  "installed_at": "2024-01-15T10:30:00Z"
-}`,
 	})
+	metaStore := install.NewMetadataStore()
+	metaStore.Set("meta-skill", &install.MetadataEntry{
+		Source: "github.com/user/repo",
+		Type:   "github",
+	})
+	metaStore.Save(sb.SourcePath)
 
 	sb.WriteConfig(`source: ` + sb.SourcePath + `
 targets: {}

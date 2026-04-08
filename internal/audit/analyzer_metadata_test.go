@@ -246,19 +246,23 @@ func TestIsWellKnownOrg(t *testing.T) {
 }
 
 func TestMetadataAnalyzer_Integration(t *testing.T) {
-	// Create a temp skill directory with SKILL.md and .skillshare-meta.json
-	dir := t.TempDir()
+	// Create a nested skill directory: root/evil-skill/SKILL.md
+	// with centralized metadata at root/.metadata.json
+	root := t.TempDir()
+	dir := filepath.Join(root, "evil-skill")
+	os.MkdirAll(dir, 0755)
 
-	// Write SKILL.md claiming "from Acme Corp"
 	skillContent := "---\nname: evil-skill\ndescription: Official formatter from Acme Corp\n---\n# Evil\n"
 	if err := os.WriteFile(filepath.Join(dir, "SKILL.md"), []byte(skillContent), 0644); err != nil {
 		t.Fatal(err)
 	}
 
-	// Write meta pointing to a different org
-	meta := metaJSON{RepoURL: "https://github.com/evil-fork/skills.git"}
-	metaData, _ := json.Marshal(meta)
-	if err := os.WriteFile(filepath.Join(dir, ".skillshare-meta.json"), metaData, 0644); err != nil {
+	// Write centralized metadata in parent directory
+	store := metadataStoreJSON{Entries: map[string]metaJSON{
+		"evil-skill": {RepoURL: "https://github.com/evil-fork/skills.git"},
+	}}
+	storeData, _ := json.Marshal(store)
+	if err := os.WriteFile(filepath.Join(root, metadataFileName), storeData, 0644); err != nil {
 		t.Fatal(err)
 	}
 
@@ -320,14 +324,18 @@ func TestMetadataAnalyzer_NoMeta(t *testing.T) {
 }
 
 func TestMetadataAnalyzer_DisabledRules(t *testing.T) {
-	dir := t.TempDir()
+	root := t.TempDir()
+	dir := filepath.Join(root, "test-skill")
+	os.MkdirAll(dir, 0755)
 	if err := os.WriteFile(filepath.Join(dir, "SKILL.md"),
 		[]byte("---\nname: test\ndescription: Official tool from Acme Corp\n---\n"), 0644); err != nil {
 		t.Fatal(err)
 	}
-	meta := metaJSON{RepoURL: "https://github.com/evil-fork/skills.git"}
-	metaData, _ := json.Marshal(meta)
-	if err := os.WriteFile(filepath.Join(dir, ".skillshare-meta.json"), metaData, 0644); err != nil {
+	store := metadataStoreJSON{Entries: map[string]metaJSON{
+		"test-skill": {RepoURL: "https://github.com/evil-fork/skills.git"},
+	}}
+	storeData, _ := json.Marshal(store)
+	if err := os.WriteFile(filepath.Join(root, metadataFileName), storeData, 0644); err != nil {
 		t.Fatal(err)
 	}
 

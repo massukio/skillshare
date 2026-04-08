@@ -3,7 +3,6 @@
 package integration
 
 import (
-	"encoding/json"
 	"os"
 	"path/filepath"
 	"testing"
@@ -47,13 +46,14 @@ func TestUninstallProject_UpdatesConfig(t *testing.T) {
 	defer sb.Cleanup()
 	projectRoot := sb.SetupProjectDir("claude")
 
-	// Create remote skill with meta
-	skillDir := sb.CreateProjectSkill(projectRoot, "remote", map[string]string{
+	// Create remote skill with meta in centralized store
+	sb.CreateProjectSkill(projectRoot, "remote", map[string]string{
 		"SKILL.md": "# Remote",
 	})
-	meta := map[string]interface{}{"source": "org/skills/remote", "type": "github"}
-	metaJSON, _ := json.Marshal(meta)
-	os.WriteFile(filepath.Join(skillDir, ".skillshare-meta.json"), metaJSON, 0644)
+	skillsDir := filepath.Join(projectRoot, ".skillshare", "skills")
+	metaStore := install.NewMetadataStore()
+	metaStore.Set("remote", &install.MetadataEntry{Source: "org/skills/remote", Type: "github"})
+	metaStore.Save(skillsDir)
 
 	// Write config and registry with the skill
 	sb.WriteProjectConfig(projectRoot, `targets:

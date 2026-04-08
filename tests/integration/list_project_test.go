@@ -3,12 +3,12 @@
 package integration
 
 import (
-	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 
+	"skillshare/internal/install"
 	"skillshare/internal/testutil"
 )
 
@@ -22,16 +22,13 @@ func TestListProject_ShowsLocalAndRemote(t *testing.T) {
 		"SKILL.md": "# Local",
 	})
 
-	// Remote skill (with meta)
-	skillDir := sb.CreateProjectSkill(projectRoot, "remote-skill", map[string]string{
+	// Remote skill (with meta in centralized store)
+	sb.CreateProjectSkill(projectRoot, "remote-skill", map[string]string{
 		"SKILL.md": "# Remote",
 	})
-	meta := map[string]interface{}{
-		"source": "someone/skills/remote-skill",
-		"type":   "github",
-	}
-	metaJSON, _ := json.Marshal(meta)
-	os.WriteFile(filepath.Join(skillDir, ".skillshare-meta.json"), metaJSON, 0644)
+	skillsDir := filepath.Join(projectRoot, ".skillshare", "skills")
+	metaStore := `{"version":1,"entries":{"remote-skill":{"source":"someone/skills/remote-skill","type":"github"}}}`
+	os.WriteFile(filepath.Join(skillsDir, install.MetadataFileName), []byte(metaStore), 0644)
 
 	result := sb.RunCLIInDir(projectRoot, "list", "-p")
 	result.AssertSuccess(t)

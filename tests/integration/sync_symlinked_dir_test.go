@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"testing"
 
+	"skillshare/internal/install"
 	"skillshare/internal/testutil"
 )
 
@@ -334,8 +335,8 @@ func TestUpdateGroup_ExternalSymlinkRejected(t *testing.T) {
 	os.MkdirAll(filepath.Join(externalDir, "victim"), 0755)
 	os.WriteFile(filepath.Join(externalDir, "victim", "SKILL.md"),
 		[]byte("---\nname: victim\n---\n# Victim"), 0644)
-	os.WriteFile(filepath.Join(externalDir, "victim", ".skillshare-meta.json"),
-		[]byte(`{"source":"github.com/example/victim","installed_at":"2025-01-01T00:00:00Z"}`), 0644)
+	os.WriteFile(filepath.Join(externalDir, install.MetadataFileName),
+		[]byte(`{"version":1,"entries":{"victim":{"source":"github.com/example/victim","installed_at":"2025-01-01T00:00:00Z"}}}`), 0644)
 
 	// Symlink a group inside source to the external location
 	os.Symlink(externalDir, filepath.Join(sb.SourcePath, "evil-group"))
@@ -356,13 +357,13 @@ func TestUpdateAll_SymlinkedSource(t *testing.T) {
 	realSource := filepath.Join(sb.Root, "dotfiles", "skills")
 	os.MkdirAll(realSource, 0755)
 
-	// Create a skill with metadata
+	// Create a skill with metadata in centralized store
 	skillDir := filepath.Join(realSource, "remote-skill")
 	os.MkdirAll(skillDir, 0755)
 	os.WriteFile(filepath.Join(skillDir, "SKILL.md"),
 		[]byte("---\nname: remote-skill\n---\n# Remote"), 0644)
-	os.WriteFile(filepath.Join(skillDir, ".skillshare-meta.json"),
-		[]byte(`{"source":"github.com/example/remote","installed_at":"2025-01-01T00:00:00Z"}`), 0644)
+	os.WriteFile(filepath.Join(realSource, install.MetadataFileName),
+		[]byte(`{"version":1,"entries":{"remote-skill":{"source":"github.com/example/remote","installed_at":"2025-01-01T00:00:00Z"}}}`), 0644)
 
 	os.RemoveAll(sb.SourcePath)
 	if err := os.Symlink(realSource, sb.SourcePath); err != nil {
