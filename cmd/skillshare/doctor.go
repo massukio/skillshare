@@ -692,8 +692,7 @@ func checkSkillIntegrity(result *doctorResult, discovered []sync.DiscoveredSkill
 	}
 
 	for _, skill := range discovered {
-		skillName := filepath.Base(skill.SourcePath)
-		entry := store.Get(skillName)
+		entry := store.GetByPath(skill.RelPath)
 		if entry == nil {
 			continue // Local skill without meta — expected, skip silently
 		}

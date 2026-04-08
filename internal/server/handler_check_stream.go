@@ -49,7 +49,7 @@ func (s *Server) handleCheckStream(w http.ResponseWriter, r *http.Request) {
 	var localResults []skillCheckResult
 
 	for _, skill := range skills {
-		entry := s.skillsStore.Get(skill)
+		entry := s.skillsStore.GetByPath(skill)
 		if entry == nil || entry.RepoURL == "" {
 			localResults = append(localResults, skillCheckResult{
 				Name:   skill,

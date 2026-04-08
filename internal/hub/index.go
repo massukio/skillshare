@@ -78,7 +78,7 @@ func BuildIndex(sourcePath string, full bool, auditSkills bool) (*Index, error) 
 
 		// Determine source: prefer entry.Source (remote origin), fallback to relPath.
 		source := d.RelPath
-		if entry := store.Get(item.Name); entry != nil {
+		if entry := store.GetByPath(d.RelPath); entry != nil {
 			if entry.Source != "" {
 				source = entry.Source
 			}

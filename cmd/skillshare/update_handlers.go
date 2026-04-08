@@ -220,7 +220,7 @@ func updateRegularSkill(uc *updateContext, skillName string) (updateResult, erro
 	if storeErr != nil {
 		return updateResult{skipped: 1}, fmt.Errorf("cannot read metadata for '%s': %w", skillName, storeErr)
 	}
-	meta := store.Get(skillName)
+	meta := store.GetByPath(skillName)
 	if meta == nil || meta.Source == "" {
 		return updateResult{skipped: 1}, fmt.Errorf("skill '%s' has no source metadata, cannot update", skillName)
 	}
@@ -363,13 +363,9 @@ func updateSkillFromMeta(uc *updateContext, skillPath string, cachedMeta *instal
 	meta := cachedMeta
 	if meta == nil {
 		store, _ := install.LoadMetadataWithMigration(uc.sourcePath, "")
-		skillName := filepath.Base(skillPath)
-		// Try base name first, then relative path from source
-		meta = store.Get(skillName)
-		if meta == nil {
-			if rel, relErr := filepath.Rel(uc.sourcePath, skillPath); relErr == nil {
-				meta = store.Get(rel)
-			}
+		// GetByPath handles both full-path keys and legacy basename+group keys.
+		if rel, relErr := filepath.Rel(uc.sourcePath, skillPath); relErr == nil {
+			meta = store.GetByPath(filepath.ToSlash(rel))
 		}
 		if meta == nil || meta.Source == "" {
 			return false, nil, nil

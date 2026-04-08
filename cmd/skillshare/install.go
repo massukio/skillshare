@@ -251,7 +251,7 @@ func resolveSkillFromName(skillName string, cfg *config.Config) (*install.Source
 		return nil, fmt.Errorf("skill '%s' not found or has no metadata", skillName)
 	}
 
-	entry := store.Get(skillName)
+	entry := store.GetByPath(skillName)
 	if entry == nil || entry.Source == "" {
 		return nil, fmt.Errorf("skill '%s' has no metadata, cannot update", skillName)
 	}

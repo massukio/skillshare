@@ -191,8 +191,7 @@ func (s *Server) handleSetSkillTargets(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 
-		skillName := filepath.Base(d.SourcePath)
-		s.skillsStore.RefreshHashes(skillName, d.SourcePath)
+		s.skillsStore.RefreshHashes(d.RelPath, d.SourcePath)
 		s.skillsStore.Save(s.cfg.Source) //nolint:errcheck
 
 		s.writeOpsLog("set-skill-targets", "ok", start, map[string]any{

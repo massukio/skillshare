@@ -80,7 +80,7 @@ func collectCheckItems(sourceDir string, repos []string, skills []string) (
 
 	for _, skill := range skills {
 		skillPath := filepath.Join(sourceDir, skill)
-		entry := store.Get(skill)
+		entry := store.GetByPath(skill)
 
 		if entry == nil || entry.RepoURL == "" {
 			result := checkSkillResult{Name: skill, Status: "local"}

@@ -232,8 +232,7 @@ func buildSkillEntries(discovered []sync.DiscoveredSkill) []skillEntry {
 		}
 
 		// Enrich from centralized metadata store
-		skillName := filepath.Base(d.SourcePath)
-		if entry := store.Get(skillName); entry != nil {
+		if entry := store.GetByPath(d.RelPath); entry != nil {
 			skills[i].Source = entry.Source
 			skills[i].Type = entry.Type
 			if !entry.InstalledAt.IsZero() {
