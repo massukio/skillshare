@@ -35,10 +35,10 @@ _personal-repo  !  3 skills, has uncommitted changes
 Targets
 claude
   skills   merged       [merge] ~/.claude/skills (8 shared, 2 local)
-  agents   synced       8/8 linked
+  agents   merged       [merge] 8/8 linked
 cursor
   skills   merged       [merge] ~/.cursor/skills (3 shared, 0 local)
-  agents   synced       8/8 linked
+  agents   merged       [merge] 8/8 linked
 windsurf
   skills   has files    [merge->needs sync] ~/.windsurf/skills
 ⚠ 2 skill(s) not synced — run 'skillshare sync'
@@ -77,7 +77,7 @@ Each target is shown as a header with sub-items for **skills** and **agents**:
 ```
 claude
   skills   merged       [merge] ~/.claude/skills (8 shared, 2 local)
-  agents   synced       8/8 linked
+  agents   merged       [merge] 8/8 linked
 ```
 
 **Skills sub-item** shows:
@@ -94,12 +94,11 @@ If agents source does not exist or the target has no agent path configured, the 
 
 | Status | Meaning |
 |--------|---------|
-| `merged` | Skills are symlinked individually |
+| `merged` | Skills/agents are symlinked individually |
 | `copied` | Skills are copied as real files (with manifest) |
 | `linked` | Entire directory is symlinked |
 | `has files` | Not yet synced |
 | `needs sync` | Mode changed, run `sync` to apply |
-| `synced` | Agents are all linked |
 | `drift` | Some agents are missing — run `sync agents` |
 
 ### Extras
@@ -213,10 +212,10 @@ Source (project)
 Targets
 claude
   skills   merged       [merge] .claude/skills (3 shared, 0 local)
-  agents   synced       4/4 linked
+  agents   merged       [merge] 4/4 linked
 cursor
   skills   merged       [merge] .cursor/skills (3 shared, 0 local)
-  agents   synced       4/4 linked
+  agents   merged       [merge] 4/4 linked
 
 Extras
 rules        has files  [merge] .cursor/rules (4 files)
