@@ -30,7 +30,13 @@ import { radius } from '../design';
 
 type UpdatePhase = 'selecting' | 'updating' | 'done';
 
-type CheckItemStatus = 'unchecked' | 'checking' | 'behind' | 'up-to-date' | 'update-available' | 'error';
+type CheckStatus = 'unchecked' | 'checking' | 'behind' | 'up-to-date' | 'update-available' | 'error';
+
+interface CheckItemStatus {
+  status: CheckStatus;
+  message?: string;
+  behind?: number;
+}
 
 type TypeFilter = 'all' | 'tracked' | 'github';
 
@@ -52,6 +58,20 @@ interface ItemUpdateStatus {
   status: 'pending' | 'in-progress' | 'success' | 'error' | 'blocked' | 'skipped';
   message?: string;
   auditRiskLabel?: string;
+}
+
+/* ── Glob filter ──────────────────────────────────────── */
+
+function globToRegex(pattern: string): RegExp {
+  if (!/[*?]/.test(pattern)) {
+    const escaped = pattern.replace(/[.+^${}()|[\]\\]/g, '\\$&');
+    return new RegExp(escaped, 'i');
+  }
+  const escaped = pattern
+    .replace(/[.+^${}()|[\]\\]/g, '\\$&')
+    .replace(/\*/g, '.*')
+    .replace(/\?/g, '.');
+  return new RegExp(`^${escaped}$`, 'i');
 }
 
 /* ── Component ──────────────────────────────────────── */
@@ -93,6 +113,7 @@ export default function UpdatePage() {
   // Check state
   const [checkStatuses, setCheckStatuses] = useState<Map<string, CheckItemStatus>>(new Map());
   const [checking, setChecking] = useState(false);
+  const [checkMode, setCheckMode] = useState<'all' | 'selected' | null>(null);
   const [checkProgress, setCheckProgress] = useState<{ checked: number; total: number } | null>(null);
   const esRef = useRef<EventSource | null>(null);
   const startTimeRef = useRef<number>(0);
@@ -133,11 +154,17 @@ export default function UpdatePage() {
       const next = new Map(prev);
       for (const repo of result.tracked_repos) {
         if (filterNames && !filterNames.has(repo.name)) continue;
-        next.set(repo.name, repo.status === 'behind' ? 'behind' : 'up-to-date');
+        next.set(repo.name, {
+          status: repo.status === 'behind' ? 'behind' : 'up-to-date',
+          message: repo.message,
+          behind: repo.behind,
+        });
       }
       for (const skill of result.skills) {
         if (filterNames && !filterNames.has(skill.name)) continue;
-        next.set(skill.name, skill.status === 'update_available' ? 'update-available' : 'up-to-date');
+        next.set(skill.name, {
+          status: skill.status === 'update_available' ? 'update-available' : 'up-to-date',
+        });
       }
       return next;
     });
@@ -146,6 +173,7 @@ export default function UpdatePage() {
   const runCheck = useCallback((filterNames?: Set<string>) => {
     esRef.current?.close();
     setChecking(true);
+    setCheckMode(filterNames ? 'selected' : 'all');
     setCheckProgress(null);
     startTimeRef.current = Date.now();
 
@@ -153,9 +181,9 @@ export default function UpdatePage() {
     setCheckStatuses((prev) => {
       const next = new Map(prev);
       if (filterNames) {
-        for (const name of filterNames) next.set(name, 'checking');
+        for (const name of filterNames) next.set(name, { status: 'checking' });
       } else {
-        for (const item of updatableItems) next.set(item.name, 'checking');
+        for (const item of updatableItems) next.set(item.name, { status: 'checking' });
       }
       return next;
     });
@@ -167,6 +195,7 @@ export default function UpdatePage() {
       (result) => {
         applyCheckResult(result, filterNames);
         setChecking(false);
+        setCheckMode(null);
         setCheckProgress(null);
       },
       (err) => {
@@ -175,13 +204,14 @@ export default function UpdatePage() {
         setCheckStatuses((prev) => {
           const next = new Map(prev);
           if (filterNames) {
-            for (const name of filterNames) next.set(name, 'error');
+            for (const name of filterNames) next.set(name, { status: 'error' });
           } else {
-            for (const item of updatableItems) next.set(item.name, 'error');
+            for (const item of updatableItems) next.set(item.name, { status: 'error' });
           }
           return next;
         });
         setChecking(false);
+        setCheckMode(null);
         setCheckProgress(null);
       },
     );
@@ -207,10 +237,8 @@ export default function UpdatePage() {
   const filtered = useMemo(() => {
     let list = updatableItems;
     if (deferredSearch.trim()) {
-      const lower = deferredSearch.toLowerCase();
-      list = list.filter(
-        (s) => s.name.toLowerCase().includes(lower) || s.relPath.toLowerCase().includes(lower),
-      );
+      const re = globToRegex(deferredSearch.trim());
+      list = list.filter((s) => re.test(s.name) || re.test(s.relPath));
     }
     if (typeFilter === 'tracked') {
       list = list.filter((s) => s.isInRepo);
@@ -418,7 +446,7 @@ export default function UpdatePage() {
                 variant="ghost"
                 size="sm"
                 onClick={handleCheckAll}
-                loading={checking && selected.size === 0}
+                loading={checking && checkMode === 'all'}
                 disabled={checking || updatableItems.length === 0}
               >
                 <RefreshCw size={16} />
@@ -428,7 +456,7 @@ export default function UpdatePage() {
                 variant="ghost"
                 size="sm"
                 onClick={handleCheckSelected}
-                loading={checking && selected.size > 0}
+                loading={checking && checkMode === 'selected'}
                 disabled={checking || selected.size === 0}
               >
                 <RefreshCw size={16} />
@@ -537,7 +565,7 @@ export default function UpdatePage() {
                   itemContent={(index) => {
                     const item = filtered[index];
                     const isSelected = selected.has(item.name);
-                    const checkStatus = checkStatuses.get(item.name) ?? 'unchecked';
+                    const checkStatus = checkStatuses.get(item.name) ?? { status: 'unchecked' as CheckStatus };
                     return (
                       <button
                         type="button"
@@ -749,6 +777,12 @@ export default function UpdatePage() {
                   </Button>
                 )
               )}
+              {item.status === 'blocked' && (
+                <Button variant="warning" size="sm" onClick={() => handleRetryForce(item.name)}>
+                  <RefreshCw size={14} />
+                  Force Retry
+                </Button>
+              )}
               <StatusBadge status={item.status} />
             </div>
           </div>
@@ -824,13 +858,13 @@ function StatusBadge({ status }: { status: ItemUpdateStatus['status'] }) {
 }
 
 function CheckStatusBadge({ status }: { status: CheckItemStatus }) {
-  switch (status) {
+  switch (status.status) {
     case 'unchecked':
       return <Badge size="sm">Unchecked</Badge>;
     case 'checking':
       return <Badge variant="info" size="sm"><Loader2 size={10} className="animate-spin mr-1" />Checking</Badge>;
     case 'behind':
-      return <Badge variant="warning" size="sm">Behind</Badge>;
+      return <Badge variant="warning" size="sm">{status.behind ? `${status.behind} behind` : 'Behind'}</Badge>;
     case 'up-to-date':
       return <Badge variant="success" size="sm">Up to date</Badge>;
     case 'update-available':
