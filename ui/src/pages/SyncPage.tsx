@@ -573,7 +573,7 @@ function DiffItemRow({ item }: { item: { action: string; skill: string; reason?:
     <div className="flex items-center gap-2 text-base py-0.5">
       <ActionBadge action={item.action} />
       <ArrowRight size={12} className="text-muted-dark shrink-0" />
-      {item.kind && <KindBadge kind={item.kind} />}
+      <KindBadge kind={item.kind ?? 'skill'} />
       <span className="font-mono text-pencil-light text-sm truncate">
         {item.skill}
       </span>

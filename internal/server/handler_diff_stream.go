@@ -29,6 +29,7 @@ func (s *Server) handleDiffStream(w http.ResponseWriter, r *http.Request) {
 	// Snapshot config under RLock, then release before slow I/O.
 	s.mu.RLock()
 	source := s.cfg.Source
+	agentsSource := s.agentsSource()
 	globalMode := s.cfg.Mode
 	targets := s.cloneTargets()
 	s.mu.RUnlock()
@@ -68,7 +69,6 @@ func (s *Server) handleDiffStream(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Agent diffs — discover agents and compute per-target diffs
-	agentsSource := s.agentsSource()
 	var agents []resource.DiscoveredResource
 	if agentsSource != "" {
 		discovered, _ := resource.AgentKind{}.Discover(agentsSource)

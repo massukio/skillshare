@@ -57,6 +57,11 @@ func (s *Server) handleSync(w http.ResponseWriter, r *http.Request) {
 		// Default to non-dry-run, non-force, empty kind (both)
 	}
 
+	if body.Kind != "" && body.Kind != "skill" && body.Kind != "agent" {
+		writeError(w, http.StatusBadRequest, "invalid kind: must be 'skill', 'agent', or empty")
+		return
+	}
+
 	globalMode := s.cfg.Mode
 	if globalMode == "" {
 		globalMode = "merge"
