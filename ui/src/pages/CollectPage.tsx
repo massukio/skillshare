@@ -143,7 +143,7 @@ export default function CollectPage() {
 
   return (
     <div className="space-y-5 animate-fade-in">
-      <PageHeader icon={<ArrowDownToLine size={24} strokeWidth={2.5} />} title="Collect" subtitle="Pull local skills from targets back to source" />
+      <PageHeader icon={<ArrowDownToLine size={24} strokeWidth={2.5} />} title="Collect" subtitle="Pull local resources from targets back to source" />
 
       {/* Visual Pipeline (reverse direction) */}
       <div className="hidden md:flex items-center justify-center gap-4">
@@ -211,29 +211,29 @@ export default function CollectPage() {
       {/* Scan control area */}
       <Card className="text-center">
         <div data-tour="collect-scan" className="flex flex-col items-center gap-4">
-          <SegmentedControl
-            value={scope}
-            onChange={setScope}
-            options={[
-              { value: 'skill' as const, label: 'Skills' },
-              { value: 'agent' as const, label: 'Agents' },
-              { value: 'both' as const, label: 'Both' },
-            ]}
-            size="sm"
-            connected
-          />
-
-          <Button
-            onClick={() => handleScan(presetTarget)}
-            loading={phase === 'scanning'}
-            disabled={phase === 'collecting'}
-            variant="primary"
-            size="lg"
-            className="min-w-[200px]"
-          >
-            {phase !== 'scanning' && <ArrowDownToLine size={22} strokeWidth={2.5} />}
-            {phase === 'scanning' ? 'Scanning...' : phase === 'idle' ? labels.scanBtn : 'Re-scan'}
-          </Button>
+          <div className="flex flex-wrap items-center justify-center gap-3">
+            <SegmentedControl
+              value={scope}
+              onChange={setScope}
+              options={[
+                { value: 'skill' as const, label: 'Skills' },
+                { value: 'agent' as const, label: 'Agents' },
+                { value: 'both' as const, label: 'Both' },
+              ]}
+              size="sm"
+              connected
+            />
+            <Button
+              onClick={() => handleScan(presetTarget)}
+              loading={phase === 'scanning'}
+              disabled={phase === 'collecting'}
+              variant="primary"
+              size="sm"
+            >
+              {phase !== 'scanning' && <ArrowDownToLine size={18} strokeWidth={2.5} />}
+              {phase === 'scanning' ? 'Scanning...' : phase === 'idle' ? labels.scanBtn : 'Re-scan'}
+            </Button>
+          </div>
 
           {presetTarget && (
             <p className="text-sm text-pencil-light">

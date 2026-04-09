@@ -145,10 +145,23 @@ export default function SyncPage() {
   const agentSync = counts.agent.link + counts.agent.update + counts.agent.prune + counts.agent.skip;
   const pendingLocal = counts.skill.local + counts.agent.local;
   const syncActions = skillSync + agentSync;
+  const totalLink = counts.skill.link + counts.agent.link;
+  const totalUpdate = counts.skill.update + counts.agent.update;
+  const totalSkip = counts.skill.skip + counts.agent.skip;
+  const totalPrune = counts.skill.prune + counts.agent.prune;
+
+  const statParts = [
+    totalLink > 0 && { n: totalLink, label: 'to link', cls: 'text-success' },
+    totalUpdate > 0 && { n: totalUpdate, label: 'to update', cls: 'text-info' },
+    totalSkip > 0 && { n: totalSkip, label: 'skipped', cls: 'text-warning' },
+    totalPrune > 0 && { n: totalPrune, label: 'to prune', cls: 'text-danger' },
+    pendingLocal > 0 && { n: pendingLocal, label: 'local only', cls: 'text-pencil-light' },
+    allIgnored.length > 0 && { n: allIgnored.length, label: 'ignored', cls: 'text-muted-dark' },
+  ].filter((x): x is { n: number; label: string; cls: string } => !!x);
 
   return (
     <div className="space-y-5 animate-fade-in">
-      <PageHeader icon={<RefreshCw size={24} strokeWidth={2.5} />} title="Sync" subtitle="Push your skills from source to all configured targets" />
+      <PageHeader icon={<RefreshCw size={24} strokeWidth={2.5} />} title="Sync" subtitle="Push resources from source to all configured targets" />
 
       {/* Visual Pipeline */}
       <div className="hidden md:flex items-center justify-center gap-4">
@@ -222,105 +235,75 @@ export default function SyncPage() {
           {diffLoading ? (
             <p className="text-pencil-light text-base">Checking status...</p>
           ) : syncActions > 0 ? (
-            <div className="flex flex-col items-center gap-3">
-              <div className="inline-grid grid-cols-[auto_1fr] gap-x-3 gap-y-2 items-center">
-                {skillSync > 0 && (
-                  <>
-                    <KindBadge kind="skill" />
-                    <div className="flex flex-wrap gap-2">
-                      {counts.skill.link > 0 && <Badge variant="success">{counts.skill.link} to link</Badge>}
-                      {counts.skill.update > 0 && <Badge variant="info">{counts.skill.update} to update</Badge>}
-                      {counts.skill.skip > 0 && <Badge variant="warning">{counts.skill.skip} skipped</Badge>}
-                      {counts.skill.prune > 0 && <Badge variant="danger">{counts.skill.prune} to prune</Badge>}
-                    </div>
-                  </>
-                )}
-                {agentSync > 0 && (
-                  <>
-                    <KindBadge kind="agent" />
-                    <div className="flex flex-wrap gap-2">
-                      {counts.agent.link > 0 && <Badge variant="success">{counts.agent.link} to link</Badge>}
-                      {counts.agent.update > 0 && <Badge variant="info">{counts.agent.update} to update</Badge>}
-                      {counts.agent.skip > 0 && <Badge variant="warning">{counts.agent.skip} skipped</Badge>}
-                      {counts.agent.prune > 0 && <Badge variant="danger">{counts.agent.prune} to prune</Badge>}
-                    </div>
-                  </>
-                )}
-              </div>
-              {(pendingLocal > 0 || allIgnored.length > 0) && (
-                <div className="flex flex-wrap justify-center gap-2">
-                  {pendingLocal > 0 && <Badge variant="default">{pendingLocal} local only</Badge>}
-                  {allIgnored.length > 0 && <Badge variant="default">{allIgnored.length} ignored</Badge>}
-                </div>
-              )}
-            </div>
-          ) : pendingLocal > 0 ? (
-            <div className="flex flex-wrap items-center justify-center gap-3">
-              <div className="flex items-center gap-2 text-success">
-                <CheckCircle size={18} strokeWidth={2.5} />
-                <span className="text-base font-medium">All targets are in sync!</span>
-              </div>
-              <Badge variant="default">{pendingLocal} local only</Badge>
-              {allIgnored.length > 0 && (
-                <Badge variant="default">{allIgnored.length} ignored</Badge>
-              )}
+            <div className="space-y-1 text-center">
+              <p className="text-sm">
+                {statParts.map((p, i) => (
+                  <span key={i}>
+                    {i > 0 && <span className="text-muted-dark mx-1.5">·</span>}
+                    <strong className={p.cls}>{p.n}</strong>{' '}
+                    <span className="text-pencil-light">{p.label}</span>
+                  </span>
+                ))}
+              </p>
+              <p className="text-xs text-pencil-light/60">
+                {[
+                  skillSync > 0 && `${skillSync} skill${skillSync !== 1 ? 's' : ''}`,
+                  agentSync > 0 && `${agentSync} agent${agentSync !== 1 ? 's' : ''}`,
+                ].filter(Boolean).join(' · ')}
+              </p>
             </div>
           ) : (
-            <div className="flex flex-wrap items-center justify-center gap-3">
-              <div className="flex items-center gap-2 text-success">
-                <CheckCircle size={18} strokeWidth={2.5} />
-                <span className="text-base font-medium">All targets are in sync!</span>
-              </div>
-              {allIgnored.length > 0 && (
-                <Badge variant="default">{allIgnored.length} ignored</Badge>
-              )}
+            <div className="flex flex-wrap items-center justify-center gap-2 text-sm">
+              <CheckCircle size={16} strokeWidth={2.5} className="text-success" />
+              <span className="font-medium text-success">All targets are in sync!</span>
+              {pendingLocal > 0 && <><span className="text-muted-dark">·</span><span className="text-pencil-light">{pendingLocal} local only</span></>}
+              {allIgnored.length > 0 && <><span className="text-muted-dark">·</span><span className="text-pencil-light">{allIgnored.length} ignored</span></>}
             </div>
           )}
 
-          {/* Scope selector */}
-          <SegmentedControl
-            value={syncScope}
-            onChange={setSyncScope}
-            options={[
-              { value: 'skill' as const, label: 'Skills' },
-              { value: 'agent' as const, label: 'Agents' },
-              { value: 'both' as const, label: 'Both' },
-            ]}
-            size="sm"
-            connected
-          />
-
-          {/* Sync split button */}
-          <SplitButton
-            onClick={() => handleSync()}
-            loading={syncing}
-            variant="primary"
-            size="lg"
-            className="min-w-[200px]"
-            dropdownAlign="right"
-            items={[
-              {
-                label: syncScope === 'agent' ? 'Force Sync Agents' : syncScope === 'skill' ? 'Force Sync Skills' : 'Force Sync',
-                icon: <Zap size={16} strokeWidth={2.5} />,
-                onClick: () => handleSync({ force: true }),
-                confirm: true,
-              },
-              {
-                label: 'Dry Run',
-                icon: <Eye size={16} strokeWidth={2.5} />,
-                onClick: () => handleSync({ dryRun: true }),
-              },
-            ]}
-          >
-            {!syncing && <RefreshCw size={22} strokeWidth={2.5} />}
-            {syncing
-              ? 'Syncing...'
-              : syncScope === 'skill'
-                ? 'Sync Skills'
-                : syncScope === 'agent'
-                  ? 'Sync Agents'
-                  : 'Sync Now'}
-          </SplitButton>
+          {/* Action bar */}
+          <div className="flex flex-wrap items-center justify-center gap-3">
+            <SegmentedControl
+              value={syncScope}
+              onChange={setSyncScope}
+              options={[
+                { value: 'skill' as const, label: 'Skills' },
+                { value: 'agent' as const, label: 'Agents' },
+                { value: 'both' as const, label: 'Both' },
+              ]}
+              size="sm"
+              connected
+            />
+            <SplitButton
+              onClick={() => handleSync()}
+              loading={syncing}
+              variant="primary"
+              size="sm"
+              dropdownAlign="right"
+              items={[
+                {
+                  label: syncScope === 'agent' ? 'Force Sync Agents' : syncScope === 'skill' ? 'Force Sync Skills' : 'Force Sync',
+                  icon: <Zap size={16} strokeWidth={2.5} />,
+                  onClick: () => handleSync({ force: true }),
+                  confirm: true,
+                },
+                {
+                  label: 'Dry Run',
+                  icon: <Eye size={16} strokeWidth={2.5} />,
+                  onClick: () => handleSync({ dryRun: true }),
+                },
+              ]}
+            >
+              {!syncing && <RefreshCw size={18} strokeWidth={2.5} />}
+              {syncing
+                ? 'Syncing...'
+                : syncScope === 'skill'
+                  ? 'Sync Skills'
+                  : syncScope === 'agent'
+                    ? 'Sync Agents'
+                    : 'Sync Now'}
+            </SplitButton>
+          </div>
         </div>
       </Card>
 

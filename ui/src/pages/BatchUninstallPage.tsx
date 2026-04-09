@@ -314,7 +314,7 @@ export default function BatchUninstallPage() {
   if (allSkills.length === 0) {
     return (
       <div className="space-y-5 animate-fade-in">
-        <PageHeader title="Uninstall Skills" icon={<Trash2 size={24} strokeWidth={2.5} />} />
+        <PageHeader title="Uninstall Resources" icon={<Trash2 size={24} strokeWidth={2.5} />} />
         <EmptyState
           icon={Trash2}
           title="No skills installed"
@@ -332,7 +332,7 @@ export default function BatchUninstallPage() {
   return (
     <div className="space-y-3 animate-fade-in pb-20">
       <PageHeader
-        title="Uninstall Skills"
+        title="Uninstall Resources"
         icon={<Trash2 size={24} strokeWidth={2.5} />}
         subtitle={`${allSkills.length} resource${allSkills.length !== 1 ? 's' : ''} installed`}
         className="mb-4!"
