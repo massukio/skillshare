@@ -41,7 +41,7 @@ func computeAgentTargetDiff(targetDir string, agents []resource.DiscoveredResour
 				Skill:  flatName,
 				Action: "link",
 				Reason: "source only",
-				Kind:   "agent",
+				Kind:   kindAgent,
 			})
 			continue
 		}
@@ -54,7 +54,7 @@ func computeAgentTargetDiff(targetDir string, agents []resource.DiscoveredResour
 					Skill:  flatName,
 					Action: "update",
 					Reason: "link target unreadable",
-					Kind:   "agent",
+					Kind:   kindAgent,
 				})
 				continue
 			}
@@ -64,7 +64,7 @@ func computeAgentTargetDiff(targetDir string, agents []resource.DiscoveredResour
 					Skill:  flatName,
 					Action: "update",
 					Reason: "symlink points elsewhere",
-					Kind:   "agent",
+					Kind:   kindAgent,
 				})
 			}
 			// else: in sync, no item emitted
@@ -82,14 +82,14 @@ func computeAgentTargetDiff(targetDir string, agents []resource.DiscoveredResour
 				Skill:  name,
 				Action: "prune",
 				Reason: "orphan symlink",
-				Kind:   "agent",
+				Kind:   kindAgent,
 			})
 		} else {
 			items = append(items, diffItem{
 				Skill:  name,
 				Action: "local",
 				Reason: "local file",
-				Kind:   "agent",
+				Kind:   kindAgent,
 			})
 		}
 	}

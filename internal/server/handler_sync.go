@@ -7,7 +7,6 @@ import (
 	"time"
 
 	"skillshare/internal/config"
-	"skillshare/internal/resource"
 	"skillshare/internal/skillignore"
 	ssync "skillshare/internal/sync"
 )
@@ -57,7 +56,7 @@ func (s *Server) handleSync(w http.ResponseWriter, r *http.Request) {
 		// Default to non-dry-run, non-force, empty kind (both)
 	}
 
-	if body.Kind != "" && body.Kind != "skill" && body.Kind != "agent" {
+	if body.Kind != "" && body.Kind != kindSkill && body.Kind != kindAgent {
 		writeError(w, http.StatusBadRequest, "invalid kind: must be 'skill', 'agent', or empty")
 		return
 	}
@@ -79,7 +78,7 @@ func (s *Server) handleSync(w http.ResponseWriter, r *http.Request) {
 	var ignoreStats *skillignore.IgnoreStats
 
 	// Skill sync (skip when kind == "agent")
-	if body.Kind != "agent" {
+	if body.Kind != kindAgent {
 		var allSkills []ssync.DiscoveredSkill
 		var err error
 		allSkills, ignoreStats, err = ssync.DiscoverSourceSkillsWithStats(s.cfg.Source)
@@ -174,83 +173,60 @@ func (s *Server) handleSync(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Agent sync (skip when kind == "skill")
-	if body.Kind != "skill" {
+	if body.Kind != kindSkill {
 		agentsSource := s.agentsSource()
-		if agentsSource != "" {
-			agentDiscovered, _ := resource.AgentKind{}.Discover(agentsSource)
-			agents := resource.ActiveAgents(agentDiscovered)
+		if agents := discoverActiveAgents(agentsSource); len(agents) > 0 {
+			builtinAgents := s.builtinAgentTargets()
 
-			if len(agents) > 0 {
-				var builtinAgents map[string]config.TargetConfig
-				if s.IsProjectMode() {
-					builtinAgents = config.ProjectAgentTargets()
-				} else {
-					builtinAgents = config.DefaultAgentTargets()
+			for name, target := range s.cfg.Targets {
+				agentPath := resolveAgentPath(target, builtinAgents, name)
+				if agentPath == "" {
+					continue
 				}
 
-				for name, target := range s.cfg.Targets {
-					ac := target.AgentsConfig()
-					agentPath := ac.Path
-					if agentPath == "" {
-						if builtin, ok := builtinAgents[name]; ok {
-							agentPath = builtin.Path
-						}
-					}
-					if agentPath == "" {
-						continue
-					}
-					agentPath = config.ExpandPath(agentPath)
+				agentMode := target.AgentsConfig().Mode
+				if agentMode == "" {
+					agentMode = "merge"
+				}
 
-					agentMode := ac.Mode
-					if agentMode == "" {
-						agentMode = "merge"
-					}
+				agentResult, err := ssync.SyncAgents(agents, agentsSource, agentPath, agentMode, body.DryRun, body.Force)
+				if err != nil {
+					warnings = append(warnings, "agent sync failed for "+name+": "+err.Error())
+					continue
+				}
 
-					agentResult, err := ssync.SyncAgents(agents, agentsSource, agentPath, agentMode, body.DryRun, body.Force)
-					if err != nil {
-						warnings = append(warnings, "agent sync failed for "+name+": "+err.Error())
-						continue
+				// Find or create result entry for this target
+				idx := -1
+				for i := range results {
+					if results[i].Target == name {
+						idx = i
+						break
 					}
+				}
+				if idx >= 0 {
+					results[idx].Linked = append(results[idx].Linked, agentResult.Linked...)
+					results[idx].Updated = append(results[idx].Updated, agentResult.Updated...)
+					results[idx].Skipped = append(results[idx].Skipped, agentResult.Skipped...)
+				} else if len(agentResult.Linked) > 0 || len(agentResult.Updated) > 0 || len(agentResult.Skipped) > 0 {
+					results = append(results, syncTargetResult{
+						Target:  name,
+						Linked:  agentResult.Linked,
+						Updated: agentResult.Updated,
+						Skipped: agentResult.Skipped,
+						Pruned:  make([]string, 0),
+					})
+					idx = len(results) - 1
+				}
 
-					// Merge into existing result or create new
-					merged := false
-					for i := range results {
-						if results[i].Target == name {
-							results[i].Linked = append(results[i].Linked, agentResult.Linked...)
-							results[i].Updated = append(results[i].Updated, agentResult.Updated...)
-							results[i].Skipped = append(results[i].Skipped, agentResult.Skipped...)
-							merged = true
-							break
-						}
-					}
-					if !merged && (len(agentResult.Linked) > 0 || len(agentResult.Updated) > 0 || len(agentResult.Skipped) > 0) {
-						results = append(results, syncTargetResult{
-							Target:  name,
-							Linked:  agentResult.Linked,
-							Updated: agentResult.Updated,
-							Skipped: agentResult.Skipped,
-							Pruned:  make([]string, 0),
-						})
-					}
-
-					// Prune orphan agents
-					if agentMode == "merge" {
-						pruned, _ := ssync.PruneOrphanAgentLinks(agentPath, agents, body.DryRun)
-						for i := range results {
-							if results[i].Target == name {
-								results[i].Pruned = append(results[i].Pruned, pruned...)
-								break
-							}
-						}
-					} else if agentMode == "copy" {
-						pruned, _ := ssync.PruneOrphanAgentCopies(agentPath, agents, body.DryRun)
-						for i := range results {
-							if results[i].Target == name {
-								results[i].Pruned = append(results[i].Pruned, pruned...)
-								break
-							}
-						}
-					}
+				// Prune orphan agents — reuse idx to avoid re-scanning
+				var pruned []string
+				if agentMode == "merge" {
+					pruned, _ = ssync.PruneOrphanAgentLinks(agentPath, agents, body.DryRun)
+				} else if agentMode == "copy" {
+					pruned, _ = ssync.PruneOrphanAgentCopies(agentPath, agents, body.DryRun)
+				}
+				if idx >= 0 && len(pruned) > 0 {
+					results[idx].Pruned = append(results[idx].Pruned, pruned...)
 				}
 			}
 		}
@@ -317,57 +293,19 @@ func (s *Server) handleDiff(w http.ResponseWriter, r *http.Request) {
 		diffs = append(diffs, s.computeTargetDiff(name, target, discovered, globalMode, source))
 	}
 
-	// Agent diffs — discover agents and compute per-target diffs
-	var agents []resource.DiscoveredResource
-	if agentsSource != "" {
-		discovered, _ := resource.AgentKind{}.Discover(agentsSource)
-		agents = resource.ActiveAgents(discovered)
-	}
-
-	if len(agents) > 0 {
-		var builtinAgents map[string]config.TargetConfig
-		if s.IsProjectMode() {
-			builtinAgents = config.ProjectAgentTargets()
-		} else {
-			builtinAgents = config.DefaultAgentTargets()
-		}
-
+	// Agent diffs
+	if agents := discoverActiveAgents(agentsSource); len(agents) > 0 {
+		builtinAgents := s.builtinAgentTargets()
 		for name, target := range targets {
 			if filterTarget != "" && filterTarget != name {
 				continue
 			}
-
-			ac := target.AgentsConfig()
-			agentPath := ac.Path
-			if agentPath == "" {
-				if builtin, ok := builtinAgents[name]; ok {
-					agentPath = builtin.Path
-				}
-			}
+			agentPath := resolveAgentPath(target, builtinAgents, name)
 			if agentPath == "" {
 				continue
 			}
-			agentPath = config.ExpandPath(agentPath)
-
-			agentItems := computeAgentTargetDiff(agentPath, agents)
-			if len(agentItems) == 0 {
-				continue
-			}
-
-			// Merge into existing diff for this target
-			merged := false
-			for i := range diffs {
-				if diffs[i].Target == name {
-					diffs[i].Items = append(diffs[i].Items, agentItems...)
-					merged = true
-					break
-				}
-			}
-			if !merged {
-				diffs = append(diffs, diffTarget{
-					Target: name,
-					Items:  agentItems,
-				})
+			if items := computeAgentTargetDiff(agentPath, agents); len(items) > 0 {
+				diffs = mergeAgentDiffItems(diffs, name, items)
 			}
 		}
 	}

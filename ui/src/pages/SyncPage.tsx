@@ -122,30 +122,24 @@ export default function SyncPage() {
   // Derived ignored skills list
   const ignoredSkills = ignoreSources?.ignored_skills ?? [];
 
-  // Calculate diff summary by kind
+  // Calculate diff summary by kind (single pass)
   const diffs = diffData ?? [];
-  const allItems = diffs.flatMap((d) => d.items ?? []);
+  const counts = useMemo(() => {
+    const c = { skill: { link: 0, update: 0, prune: 0, skip: 0, local: 0 }, agent: { link: 0, update: 0, prune: 0, skip: 0, local: 0 } };
+    for (const d of diffs) {
+      for (const i of d.items ?? []) {
+        const kind = (i.kind ?? 'skill') as 'skill' | 'agent';
+        const action = i.action as keyof typeof c.skill;
+        if (c[kind] && action in c[kind]) c[kind][action]++;
+      }
+    }
+    return c;
+  }, [diffs]);
 
-  const countByKindAction = (kind: string, action: string) =>
-    allItems.filter((i) => (i.kind ?? 'skill') === kind && i.action === action).length;
-
-  const skillLinks = countByKindAction('skill', 'link');
-  const skillUpdates = countByKindAction('skill', 'update');
-  const skillPrunes = countByKindAction('skill', 'prune');
-  const skillSkips = countByKindAction('skill', 'skip');
-  const skillLocal = countByKindAction('skill', 'local');
-  const skillSync = skillLinks + skillUpdates + skillPrunes + skillSkips;
-
-  const agentLinks = countByKindAction('agent', 'link');
-  const agentUpdates = countByKindAction('agent', 'update');
-  const agentPrunes = countByKindAction('agent', 'prune');
-  const agentSkips = countByKindAction('agent', 'skip');
-  const agentLocal = countByKindAction('agent', 'local');
-  const agentSync = agentLinks + agentUpdates + agentPrunes + agentSkips;
-
-  const totalActions = allItems.length;
-  const pendingLocal = skillLocal + agentLocal;
-  const syncActions = totalActions - pendingLocal;
+  const skillSync = counts.skill.link + counts.skill.update + counts.skill.prune + counts.skill.skip;
+  const agentSync = counts.agent.link + counts.agent.update + counts.agent.prune + counts.agent.skip;
+  const pendingLocal = counts.skill.local + counts.agent.local;
+  const syncActions = skillSync + agentSync;
 
   return (
     <div className="space-y-5 animate-fade-in">
@@ -227,19 +221,19 @@ export default function SyncPage() {
               {skillSync > 0 && (
                 <div className="flex flex-wrap items-center justify-center gap-2">
                   <KindBadge kind="skill" />
-                  {skillLinks > 0 && <Badge variant="success">{skillLinks} to link</Badge>}
-                  {skillUpdates > 0 && <Badge variant="info">{skillUpdates} to update</Badge>}
-                  {skillSkips > 0 && <Badge variant="warning">{skillSkips} skipped</Badge>}
-                  {skillPrunes > 0 && <Badge variant="danger">{skillPrunes} to prune</Badge>}
+                  {counts.skill.link > 0 && <Badge variant="success">{counts.skill.link} to link</Badge>}
+                  {counts.skill.update > 0 && <Badge variant="info">{counts.skill.update} to update</Badge>}
+                  {counts.skill.skip > 0 && <Badge variant="warning">{counts.skill.skip} skipped</Badge>}
+                  {counts.skill.prune > 0 && <Badge variant="danger">{counts.skill.prune} to prune</Badge>}
                 </div>
               )}
               {agentSync > 0 && (
                 <div className="flex flex-wrap items-center justify-center gap-2">
                   <KindBadge kind="agent" />
-                  {agentLinks > 0 && <Badge variant="success">{agentLinks} to link</Badge>}
-                  {agentUpdates > 0 && <Badge variant="info">{agentUpdates} to update</Badge>}
-                  {agentSkips > 0 && <Badge variant="warning">{agentSkips} skipped</Badge>}
-                  {agentPrunes > 0 && <Badge variant="danger">{agentPrunes} to prune</Badge>}
+                  {counts.agent.link > 0 && <Badge variant="success">{counts.agent.link} to link</Badge>}
+                  {counts.agent.update > 0 && <Badge variant="info">{counts.agent.update} to update</Badge>}
+                  {counts.agent.skip > 0 && <Badge variant="warning">{counts.agent.skip} skipped</Badge>}
+                  {counts.agent.prune > 0 && <Badge variant="danger">{counts.agent.prune} to prune</Badge>}
                 </div>
               )}
               {pendingLocal > 0 && <Badge variant="default">{pendingLocal} local only</Badge>}

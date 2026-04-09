@@ -7,7 +7,6 @@ import (
 	"path/filepath"
 
 	"skillshare/internal/config"
-	"skillshare/internal/resource"
 	ssync "skillshare/internal/sync"
 	"skillshare/internal/utils"
 )
@@ -68,59 +67,21 @@ func (s *Server) handleDiffStream(w http.ResponseWriter, r *http.Request) {
 		})
 	}
 
-	// Agent diffs — discover agents and compute per-target diffs
-	var agents []resource.DiscoveredResource
-	if agentsSource != "" {
-		discovered, _ := resource.AgentKind{}.Discover(agentsSource)
-		agents = resource.ActiveAgents(discovered)
-	}
-
-	if len(agents) > 0 {
-		var builtinAgents map[string]config.TargetConfig
-		if s.IsProjectMode() {
-			builtinAgents = config.ProjectAgentTargets()
-		} else {
-			builtinAgents = config.DefaultAgentTargets()
-		}
-
+	// Agent diffs
+	if agents := discoverActiveAgents(agentsSource); len(agents) > 0 {
+		builtinAgents := s.builtinAgentTargets()
 		for name, target := range targets {
 			select {
 			case <-ctx.Done():
 				return
 			default:
 			}
-
-			ac := target.AgentsConfig()
-			agentPath := ac.Path
-			if agentPath == "" {
-				if builtin, ok := builtinAgents[name]; ok {
-					agentPath = builtin.Path
-				}
-			}
+			agentPath := resolveAgentPath(target, builtinAgents, name)
 			if agentPath == "" {
 				continue
 			}
-			agentPath = config.ExpandPath(agentPath)
-
-			agentItems := computeAgentTargetDiff(agentPath, agents)
-			if len(agentItems) == 0 {
-				continue
-			}
-
-			// Merge into existing diff for this target
-			merged := false
-			for i := range diffs {
-				if diffs[i].Target == name {
-					diffs[i].Items = append(diffs[i].Items, agentItems...)
-					merged = true
-					break
-				}
-			}
-			if !merged {
-				diffs = append(diffs, diffTarget{
-					Target: name,
-					Items:  agentItems,
-				})
+			if items := computeAgentTargetDiff(agentPath, agents); len(items) > 0 {
+				diffs = mergeAgentDiffItems(diffs, name, items)
 			}
 		}
 	}
@@ -144,7 +105,7 @@ func (s *Server) computeTargetDiff(name string, target config.TargetConfig, disc
 	if mode == "symlink" {
 		status := ssync.CheckStatus(sc.Path, source)
 		if status != ssync.StatusLinked {
-			dt.Items = append(dt.Items, diffItem{Skill: "(entire directory)", Action: "link", Reason: "source only", Kind: "skill"})
+			dt.Items = append(dt.Items, diffItem{Skill: "(entire directory)", Action: "link", Reason: "source only", Kind: kindSkill})
 		}
 		return dt
 	}
@@ -159,7 +120,7 @@ func (s *Server) computeTargetDiff(name string, target config.TargetConfig, disc
 		TargetNaming: sc.TargetNaming,
 	}, filtered)
 	if err != nil {
-		dt.Items = append(dt.Items, diffItem{Skill: "(target naming)", Action: "skip", Reason: err.Error(), Kind: "skill"})
+		dt.Items = append(dt.Items, diffItem{Skill: "(target naming)", Action: "skip", Reason: err.Error(), Kind: kindSkill})
 		return dt
 	}
 	// Surface collision/validation stats so the UI can show why skills were skipped
@@ -177,23 +138,23 @@ func (s *Server) computeTargetDiff(name string, target config.TargetConfig, disc
 			if !isManaged {
 				if info, statErr := os.Stat(targetSkillPath); statErr == nil {
 					if info.IsDir() {
-						dt.Items = append(dt.Items, diffItem{Skill: resolved.TargetName, Action: "skip", Reason: "local copy (sync --force to replace)", Kind: "skill"})
+						dt.Items = append(dt.Items, diffItem{Skill: resolved.TargetName, Action: "skip", Reason: "local copy (sync --force to replace)", Kind: kindSkill})
 					} else {
-						dt.Items = append(dt.Items, diffItem{Skill: resolved.TargetName, Action: "update", Reason: "target entry is not a directory", Kind: "skill"})
+						dt.Items = append(dt.Items, diffItem{Skill: resolved.TargetName, Action: "update", Reason: "target entry is not a directory", Kind: kindSkill})
 					}
 				} else if os.IsNotExist(statErr) {
-					dt.Items = append(dt.Items, diffItem{Skill: resolved.TargetName, Action: "link", Reason: "source only", Kind: "skill"})
+					dt.Items = append(dt.Items, diffItem{Skill: resolved.TargetName, Action: "link", Reason: "source only", Kind: kindSkill})
 				} else {
-					dt.Items = append(dt.Items, diffItem{Skill: resolved.TargetName, Action: "update", Reason: "cannot access target entry", Kind: "skill"})
+					dt.Items = append(dt.Items, diffItem{Skill: resolved.TargetName, Action: "update", Reason: "cannot access target entry", Kind: kindSkill})
 				}
 			} else {
 				targetInfo, statErr := os.Stat(targetSkillPath)
 				if os.IsNotExist(statErr) {
-					dt.Items = append(dt.Items, diffItem{Skill: resolved.TargetName, Action: "link", Reason: "missing (deleted from target)", Kind: "skill"})
+					dt.Items = append(dt.Items, diffItem{Skill: resolved.TargetName, Action: "link", Reason: "missing (deleted from target)", Kind: kindSkill})
 				} else if statErr != nil {
-					dt.Items = append(dt.Items, diffItem{Skill: resolved.TargetName, Action: "update", Reason: "cannot access target entry", Kind: "skill"})
+					dt.Items = append(dt.Items, diffItem{Skill: resolved.TargetName, Action: "update", Reason: "cannot access target entry", Kind: kindSkill})
 				} else if !targetInfo.IsDir() {
-					dt.Items = append(dt.Items, diffItem{Skill: resolved.TargetName, Action: "update", Reason: "target entry is not a directory", Kind: "skill"})
+					dt.Items = append(dt.Items, diffItem{Skill: resolved.TargetName, Action: "update", Reason: "target entry is not a directory", Kind: kindSkill})
 				} else {
 					oldMtime := manifest.Mtimes[resolved.TargetName]
 					currentMtime, mtimeErr := ssync.DirMaxMtime(skill.SourcePath)
@@ -202,9 +163,9 @@ func (s *Server) computeTargetDiff(name string, target config.TargetConfig, disc
 					}
 					srcChecksum, checksumErr := ssync.DirChecksum(skill.SourcePath)
 					if checksumErr != nil {
-						dt.Items = append(dt.Items, diffItem{Skill: resolved.TargetName, Action: "update", Reason: "cannot compute checksum", Kind: "skill"})
+						dt.Items = append(dt.Items, diffItem{Skill: resolved.TargetName, Action: "update", Reason: "cannot compute checksum", Kind: kindSkill})
 					} else if srcChecksum != oldChecksum {
-						dt.Items = append(dt.Items, diffItem{Skill: resolved.TargetName, Action: "update", Reason: "content changed", Kind: "skill"})
+						dt.Items = append(dt.Items, diffItem{Skill: resolved.TargetName, Action: "update", Reason: "content changed", Kind: kindSkill})
 					}
 				}
 			}
@@ -214,7 +175,7 @@ func (s *Server) computeTargetDiff(name string, target config.TargetConfig, disc
 				continue
 			}
 			if !validNames[managedName] {
-				dt.Items = append(dt.Items, diffItem{Skill: managedName, Action: "prune", Reason: "orphan copy", Kind: "skill"})
+				dt.Items = append(dt.Items, diffItem{Skill: managedName, Action: "prune", Reason: "orphan copy", Kind: kindSkill})
 			}
 		}
 		return dt
@@ -227,7 +188,7 @@ func (s *Server) computeTargetDiff(name string, target config.TargetConfig, disc
 		_, err := os.Lstat(targetSkillPath)
 		if err != nil {
 			if os.IsNotExist(err) {
-				dt.Items = append(dt.Items, diffItem{Skill: resolved.TargetName, Action: "link", Reason: "source only", Kind: "skill"})
+				dt.Items = append(dt.Items, diffItem{Skill: resolved.TargetName, Action: "link", Reason: "source only", Kind: kindSkill})
 			}
 			continue
 		}
@@ -235,15 +196,15 @@ func (s *Server) computeTargetDiff(name string, target config.TargetConfig, disc
 		if utils.IsSymlinkOrJunction(targetSkillPath) {
 			absLink, linkErr := utils.ResolveLinkTarget(targetSkillPath)
 			if linkErr != nil {
-				dt.Items = append(dt.Items, diffItem{Skill: resolved.TargetName, Action: "update", Reason: "link target unreadable", Kind: "skill"})
+				dt.Items = append(dt.Items, diffItem{Skill: resolved.TargetName, Action: "update", Reason: "link target unreadable", Kind: kindSkill})
 				continue
 			}
 			absSource, _ := filepath.Abs(skill.SourcePath)
 			if !utils.PathsEqual(absLink, absSource) {
-				dt.Items = append(dt.Items, diffItem{Skill: resolved.TargetName, Action: "update", Reason: "symlink points elsewhere", Kind: "skill"})
+				dt.Items = append(dt.Items, diffItem{Skill: resolved.TargetName, Action: "update", Reason: "symlink points elsewhere", Kind: kindSkill})
 			}
 		} else {
-			dt.Items = append(dt.Items, diffItem{Skill: resolved.TargetName, Action: "skip", Reason: "local copy (sync --force to replace)", Kind: "skill"})
+			dt.Items = append(dt.Items, diffItem{Skill: resolved.TargetName, Action: "skip", Reason: "local copy (sync --force to replace)", Kind: kindSkill})
 		}
 	}
 
@@ -271,16 +232,16 @@ func (s *Server) computeTargetDiff(name string, target config.TargetConfig, disc
 				}
 				absSource, _ := filepath.Abs(source)
 				if utils.PathHasPrefix(absLink, absSource+string(filepath.Separator)) {
-					dt.Items = append(dt.Items, diffItem{Skill: eName, Action: "prune", Reason: "orphan symlink", Kind: "skill"})
+					dt.Items = append(dt.Items, diffItem{Skill: eName, Action: "prune", Reason: "orphan symlink", Kind: kindSkill})
 				}
 			} else if info.IsDir() {
 				if _, inManifest := manifest.Managed[eName]; inManifest {
-					dt.Items = append(dt.Items, diffItem{Skill: eName, Action: "prune", Reason: "orphan managed directory (manifest)", Kind: "skill"})
+					dt.Items = append(dt.Items, diffItem{Skill: eName, Action: "prune", Reason: "orphan managed directory (manifest)", Kind: kindSkill})
 				} else {
 					if resolution.Naming == "flat" && (utils.HasNestedSeparator(eName) || utils.IsTrackedRepoDir(eName)) {
-						dt.Items = append(dt.Items, diffItem{Skill: eName, Action: "prune", Reason: "orphan managed directory", Kind: "skill"})
+						dt.Items = append(dt.Items, diffItem{Skill: eName, Action: "prune", Reason: "orphan managed directory", Kind: kindSkill})
 					} else {
-						dt.Items = append(dt.Items, diffItem{Skill: eName, Action: "local", Reason: "local only", Kind: "skill"})
+						dt.Items = append(dt.Items, diffItem{Skill: eName, Action: "local", Reason: "local only", Kind: kindSkill})
 					}
 				}
 			}
