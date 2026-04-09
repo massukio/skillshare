@@ -508,7 +508,8 @@ func collectInstalledAgentPaths(agentsSourcePath string) ([]auditSkillRef, error
 		return nil, fmt.Errorf("failed to discover agents: %w", err)
 	}
 	var agentPaths []auditSkillRef
-	for _, d := range resource.ActiveAgents(discovered) {
+	// Audit scans ALL agents including disabled ones — security risks don't respect .agentignore.
+	for _, d := range discovered {
 		agentPaths = append(agentPaths, auditSkillRef{name: d.FlatName, path: d.AbsPath})
 	}
 	return agentPaths, nil

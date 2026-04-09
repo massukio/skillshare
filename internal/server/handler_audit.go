@@ -76,7 +76,7 @@ func discoverAuditAgents(source string) ([]skillEntry, error) {
 		return nil, err
 	}
 	var agents []skillEntry
-	for _, d := range resource.ActiveAgents(discovered) {
+	for _, d := range discovered {
 		agents = append(agents, skillEntry{name: d.FlatName, path: d.AbsPath})
 	}
 	return agents, nil
