@@ -28,6 +28,9 @@ func FilterSkills(skills []DiscoveredSkill, include, exclude []string) ([]Discov
 }
 
 // FilterAgents filters discovered agents by include/exclude patterns.
+// Agent FlatNames include the .md extension (e.g. "tutor.md"), but filter
+// patterns are matched against the name without extension so users can write
+// intuitive patterns like "tutor" or "team-*" instead of "tutor.md".
 func FilterAgents(agents []resource.DiscoveredResource, include, exclude []string) ([]resource.DiscoveredResource, error) {
 	includePatterns, excludePatterns, err := normalizedFilterPatterns(include, exclude)
 	if err != nil {
@@ -36,7 +39,8 @@ func FilterAgents(agents []resource.DiscoveredResource, include, exclude []strin
 
 	filtered := make([]resource.DiscoveredResource, 0, len(agents))
 	for _, agent := range agents {
-		if shouldSyncFlatName(agent.FlatName, includePatterns, excludePatterns) {
+		name := strings.TrimSuffix(agent.FlatName, ".md")
+		if shouldSyncFlatName(name, includePatterns, excludePatterns) {
 			filtered = append(filtered, agent)
 		}
 	}
