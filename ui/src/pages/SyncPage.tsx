@@ -222,28 +222,36 @@ export default function SyncPage() {
           {diffLoading ? (
             <p className="text-pencil-light text-base">Checking status...</p>
           ) : syncActions > 0 ? (
-            <div className="flex flex-col items-center gap-2">
-              {skillSync > 0 && (
-                <div className="flex flex-wrap items-center justify-center gap-2">
-                  <KindBadge kind="skill" />
-                  {counts.skill.link > 0 && <Badge variant="success">{counts.skill.link} to link</Badge>}
-                  {counts.skill.update > 0 && <Badge variant="info">{counts.skill.update} to update</Badge>}
-                  {counts.skill.skip > 0 && <Badge variant="warning">{counts.skill.skip} skipped</Badge>}
-                  {counts.skill.prune > 0 && <Badge variant="danger">{counts.skill.prune} to prune</Badge>}
+            <div className="flex flex-col items-center gap-3">
+              <div className="inline-grid grid-cols-[auto_1fr] gap-x-3 gap-y-2 items-center">
+                {skillSync > 0 && (
+                  <>
+                    <KindBadge kind="skill" />
+                    <div className="flex flex-wrap gap-2">
+                      {counts.skill.link > 0 && <Badge variant="success">{counts.skill.link} to link</Badge>}
+                      {counts.skill.update > 0 && <Badge variant="info">{counts.skill.update} to update</Badge>}
+                      {counts.skill.skip > 0 && <Badge variant="warning">{counts.skill.skip} skipped</Badge>}
+                      {counts.skill.prune > 0 && <Badge variant="danger">{counts.skill.prune} to prune</Badge>}
+                    </div>
+                  </>
+                )}
+                {agentSync > 0 && (
+                  <>
+                    <KindBadge kind="agent" />
+                    <div className="flex flex-wrap gap-2">
+                      {counts.agent.link > 0 && <Badge variant="success">{counts.agent.link} to link</Badge>}
+                      {counts.agent.update > 0 && <Badge variant="info">{counts.agent.update} to update</Badge>}
+                      {counts.agent.skip > 0 && <Badge variant="warning">{counts.agent.skip} skipped</Badge>}
+                      {counts.agent.prune > 0 && <Badge variant="danger">{counts.agent.prune} to prune</Badge>}
+                    </div>
+                  </>
+                )}
+              </div>
+              {(pendingLocal > 0 || allIgnored.length > 0) && (
+                <div className="flex flex-wrap justify-center gap-2">
+                  {pendingLocal > 0 && <Badge variant="default">{pendingLocal} local only</Badge>}
+                  {allIgnored.length > 0 && <Badge variant="default">{allIgnored.length} ignored</Badge>}
                 </div>
-              )}
-              {agentSync > 0 && (
-                <div className="flex flex-wrap items-center justify-center gap-2">
-                  <KindBadge kind="agent" />
-                  {counts.agent.link > 0 && <Badge variant="success">{counts.agent.link} to link</Badge>}
-                  {counts.agent.update > 0 && <Badge variant="info">{counts.agent.update} to update</Badge>}
-                  {counts.agent.skip > 0 && <Badge variant="warning">{counts.agent.skip} skipped</Badge>}
-                  {counts.agent.prune > 0 && <Badge variant="danger">{counts.agent.prune} to prune</Badge>}
-                </div>
-              )}
-              {pendingLocal > 0 && <Badge variant="default">{pendingLocal} local only</Badge>}
-              {ignoredSkills.length > 0 && (
-                <Badge variant="default">{ignoredSkills.length} ignored</Badge>
               )}
             </div>
           ) : pendingLocal > 0 ? (
@@ -253,8 +261,8 @@ export default function SyncPage() {
                 <span className="text-base font-medium">All targets are in sync!</span>
               </div>
               <Badge variant="default">{pendingLocal} local only</Badge>
-              {ignoredSkills.length > 0 && (
-                <Badge variant="default">{ignoredSkills.length} ignored</Badge>
+              {allIgnored.length > 0 && (
+                <Badge variant="default">{allIgnored.length} ignored</Badge>
               )}
             </div>
           ) : (
@@ -263,8 +271,8 @@ export default function SyncPage() {
                 <CheckCircle size={18} strokeWidth={2.5} />
                 <span className="text-base font-medium">All targets are in sync!</span>
               </div>
-              {ignoredSkills.length > 0 && (
-                <Badge variant="default">{ignoredSkills.length} ignored</Badge>
+              {allIgnored.length > 0 && (
+                <Badge variant="default">{allIgnored.length} ignored</Badge>
               )}
             </div>
           )}
@@ -364,16 +372,36 @@ export default function SyncPage() {
             const repoCount = ignoreSources?.ignore_repos?.length ?? 0;
             const hasAgentRoot = !!ignoreSources?.agent_ignore_root;
             return (
-              <div className="mt-3 pl-8 space-y-1.5 animate-fade-in">
-                {allIgnored.map((name) => (
-                  <div key={name} className="flex items-center gap-2 text-base py-0.5">
-                    <EyeOff size={12} className="text-pencil-light/50 shrink-0" />
-                    <span className="font-mono text-pencil-light text-sm truncate">
-                      {name}
-                    </span>
+              <div className="mt-3 pl-8 space-y-3 animate-fade-in">
+                {ignoredSkills.length > 0 && (
+                  <div className="space-y-1.5">
+                    <div className="flex items-center gap-2">
+                      <KindBadge kind="skill" />
+                      <span className="text-xs text-pencil-light/70">{ignoredSkills.length}</span>
+                    </div>
+                    {ignoredSkills.map((name) => (
+                      <div key={name} className="flex items-center gap-2 text-base py-0.5 pl-1">
+                        <EyeOff size={12} className="text-pencil-light/50 shrink-0" />
+                        <span className="font-mono text-pencil-light text-sm truncate">{name}</span>
+                      </div>
+                    ))}
                   </div>
-                ))}
-                <div className="mt-2 pt-2 border-t border-dashed border-pencil-light/30 space-y-1">
+                )}
+                {ignoredAgents.length > 0 && (
+                  <div className="space-y-1.5">
+                    <div className="flex items-center gap-2">
+                      <KindBadge kind="agent" />
+                      <span className="text-xs text-pencil-light/70">{ignoredAgents.length}</span>
+                    </div>
+                    {ignoredAgents.map((name) => (
+                      <div key={name} className="flex items-center gap-2 text-base py-0.5 pl-1">
+                        <EyeOff size={12} className="text-pencil-light/50 shrink-0" />
+                        <span className="font-mono text-pencil-light text-sm truncate">{name}</span>
+                      </div>
+                    ))}
+                  </div>
+                )}
+                <div className="pt-2 border-t border-dashed border-pencil-light/30 space-y-1">
                   {hasRoot && (
                     <div className="flex items-center gap-1.5 text-xs text-pencil-light">
                       <Info size={12} className="shrink-0" />
