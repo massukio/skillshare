@@ -305,6 +305,8 @@ func newAuditTUIModel(
 	l := list.New(listItems, auditDelegate{}, 0, 0)
 	l.Title = fmt.Sprintf("Audit results (%d scanned)", activeSummary.Scanned)
 	l.Styles.Title = tc.ListTitle
+	l.Styles.NoItems = l.Styles.NoItems.PaddingLeft(2)
+	l.SetStatusBarItemName(initialTab.noun(), initialTab.noun())
 	l.SetShowStatusBar(false)
 	l.SetFilteringEnabled(false)
 	l.SetShowHelp(false)
@@ -345,6 +347,7 @@ func (m *auditTUIModel) switchTab() {
 	m.detailScroll = 0
 	m.applyFilter()
 	m.list.Title = fmt.Sprintf("Audit results (%d scanned)", m.summary.Scanned)
+	m.list.SetStatusBarItemName(m.activeTab.noun(), m.activeTab.noun())
 	skipGroupItem(&m.list, 1)
 }
 
