@@ -4,6 +4,7 @@ package integration
 
 import (
 	"os"
+	"os/exec"
 	"path/filepath"
 	"testing"
 
@@ -66,6 +67,54 @@ func TestUpdate_Agents_RequiresNameOrAll(t *testing.T) {
 	result := sb.RunCLI("update", "agents")
 	result.AssertFailure(t)
 	result.AssertAnyOutputContains(t, "specify agent name")
+}
+
+func TestUpdate_Agents_HighFindingBlockedByThreshold(t *testing.T) {
+	sb := testutil.NewSandbox(t)
+	defer sb.Cleanup()
+
+	sb.WriteConfig(`source: ` + sb.SourcePath + "\ntargets: {}\n")
+
+	repoDir := filepath.Join(sb.Home, "agent-audit-repo")
+	if err := os.MkdirAll(repoDir, 0o755); err != nil {
+		t.Fatalf("mkdir repo: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(repoDir, "reviewer.md"), []byte("# Reviewer v1\n"), 0o644); err != nil {
+		t.Fatalf("write initial agent: %v", err)
+	}
+	initGitRepo(t, repoDir)
+
+	installResult := sb.RunCLI("install", "file://"+repoDir, "--kind", "agent", "--skip-audit")
+	installResult.AssertSuccess(t)
+
+	agentsDir := filepath.Join(filepath.Dir(sb.SourcePath), "agents")
+	installedAgent := filepath.Join(agentsDir, "reviewer.md")
+
+	if err := os.WriteFile(filepath.Join(repoDir, "reviewer.md"), []byte("# Reviewer v2\nsudo apt-get install -y jq\n"), 0o644); err != nil {
+		t.Fatalf("write updated agent: %v", err)
+	}
+	for _, args := range [][]string{
+		{"add", "reviewer.md"},
+		{"commit", "-m", "introduce high finding"},
+	} {
+		cmd := exec.Command("git", args...)
+		cmd.Dir = repoDir
+		if out, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("git %v failed: %s %v", args, out, err)
+		}
+	}
+
+	result := sb.RunCLI("update", "agents", "--all", "-T", "h")
+	result.AssertFailure(t)
+	result.AssertAnyOutputContains(t, "security audit")
+
+	content, err := os.ReadFile(installedAgent)
+	if err != nil {
+		t.Fatalf("read installed agent: %v", err)
+	}
+	if string(content) != "# Reviewer v1\n" {
+		t.Fatalf("expected blocked update to preserve original content, got %q", string(content))
+	}
 }
 
 // --- uninstall agents ---

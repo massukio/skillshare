@@ -273,10 +273,18 @@ func hardWrapContent(text string, width int) string {
 
 // ─── Glamour Markdown Rendering ──────────────────────────────────────
 
-// contentGlamourStyle returns a modified dark style with no backgrounds or margins
-// that would bleed or overflow in the constrained dual-pane layout.
+// contentGlamourStyle returns a glamour style tuned for the dual-pane list
+// detail view. The base config tracks the resolved terminal theme so body
+// text stays legible on light backgrounds (glamour's dark base uses light
+// gray prose which disappears on white). Backgrounds and margins are
+// stripped to avoid bleeding in the constrained layout.
 func contentGlamourStyle() ansi.StyleConfig {
-	s := styles.DarkStyleConfig
+	var s ansi.StyleConfig
+	if theme.Get().Mode == theme.ModeLight {
+		s = styles.LightStyleConfig
+	} else {
+		s = styles.DarkStyleConfig
+	}
 	zero := uint(0)
 
 	s.Document.Margin = &zero

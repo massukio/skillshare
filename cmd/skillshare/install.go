@@ -213,6 +213,16 @@ func parseInstallArgs(args []string) (*installArgs, bool, error) {
 	return result, false, nil
 }
 
+func applyInstallJSONDefaults(parsed *installArgs) {
+	if !parsed.jsonOutput {
+		return
+	}
+	parsed.opts.Force = true
+	if !parsed.opts.HasSkillFilter() && !parsed.opts.HasAgentFilter() {
+		parsed.opts.All = true
+	}
+}
+
 // destWithInto returns the destination path, prepending opts.Into if set.
 func destWithInto(sourceDir string, opts install.InstallOptions, skillName string) string {
 	if opts.Into != "" {
@@ -325,11 +335,32 @@ func cmdInstall(args []string) error {
 	applyModeLabel(mode)
 
 	if mode == modeProject {
-		summary, err := cmdInstallProject(rest, cwd)
+		parsed, showHelp, parseErr := parseInstallArgs(rest)
+		if showHelp {
+			printInstallHelp()
+			return parseErr
+		}
+		if parseErr != nil {
+			return parseErr
+		}
+		applyInstallJSONDefaults(parsed)
+
+		jsonUI := newJSONUISuppressor(parsed.jsonOutput)
+		defer jsonUI.Flush()
+
+		jsonWriteResult := func(summary installLogSummary, cmdErr error) error {
+			jsonUI.Flush()
+			return installOutputJSON(summary, start, cmdErr)
+		}
+
+		summary, err := cmdInstallProjectParsed(parsed, cwd)
 		if summary.Mode == "" {
 			summary.Mode = "project"
 		}
 		logInstallOp(config.ProjectConfigPath(cwd), rest, start, err, summary)
+		if parsed.jsonOutput {
+			return jsonWriteResult(summary, err)
+		}
 		return err
 	}
 
@@ -341,46 +372,30 @@ func cmdInstall(args []string) error {
 	if parseErr != nil {
 		return parseErr
 	}
-
-	// --json implies --force and --all (skip prompts for non-interactive use)
-	if parsed.jsonOutput {
-		parsed.opts.Force = true
-		if !parsed.opts.HasSkillFilter() {
-			parsed.opts.All = true
-		}
-	}
+	applyInstallJSONDefaults(parsed)
 
 	// When no source is given, only bare "install" is valid — reject incompatible flags
 	if parsed.sourceArg == "" {
 		hasSourceFlags := parsed.opts.Name != "" || parsed.opts.Into != "" ||
-			parsed.opts.Track || len(parsed.opts.Skills) > 0 ||
-			len(parsed.opts.Exclude) > 0 || parsed.opts.All || parsed.opts.Yes || parsed.opts.Update ||
-			parsed.opts.Branch != ""
-		if hasSourceFlags && !parsed.jsonOutput {
-			return fmt.Errorf("flags --name, --into, --track, --skill, --exclude, --all, --yes, and --update require a source argument")
+			parsed.opts.Track || parsed.opts.HasSkillFilter() || parsed.opts.HasAgentFilter() ||
+			len(parsed.opts.Exclude) > 0 || parsed.opts.Update || parsed.opts.Branch != "" ||
+			parsed.opts.Kind != ""
+		if hasSourceFlags || ((parsed.opts.All || parsed.opts.Yes) && !parsed.jsonOutput) {
+			return fmt.Errorf("flags --name, --into, --track, --skill, --agent, --kind, --exclude, --all, --yes, --branch, and --update require a source argument")
 		}
 	}
 
 	// In JSON mode, redirect all UI output to stderr early so the
 	// logo, spinner, step, and handler output don't corrupt stdout.
-	var restoreJSONUI func()
-	restoreJSONUIIfNeeded := func() {
-		if restoreJSONUI != nil {
-			restoreJSONUI()
-			restoreJSONUI = nil
-		}
-	}
-	if parsed.jsonOutput {
-		restoreJSONUI = suppressUIToDevnull()
-	}
-	defer restoreJSONUIIfNeeded()
+	jsonUI := newJSONUISuppressor(parsed.jsonOutput)
+	defer jsonUI.Flush()
 
 	jsonWriteError := func(err error) error {
-		restoreJSONUIIfNeeded()
+		jsonUI.Flush()
 		return writeJSONError(err)
 	}
 	jsonWriteResult := func(summary installLogSummary, cmdErr error) error {
-		restoreJSONUIIfNeeded()
+		jsonUI.Flush()
 		return installOutputJSON(summary, start, cmdErr)
 	}
 
@@ -566,11 +581,13 @@ Sources:
 
 Options:
   --name <name>       Override installed name when exactly one skill is installed
+  --kind <kind>       Restrict discovery/install to skill or agent
   --into <dir>        Install into subdirectory (e.g. "frontend" or "frontend/react")
   --force, -f         Overwrite existing skill; also continue if audit would block
   --update, -u        Update existing (git pull if possible, else reinstall)
   --branch, -b <name> Git branch to clone from (default: remote default)
   --track, -t         Install as tracked repo (preserves .git for updates)
+  --agent, -a <names> Select specific agents from a multi-agent repo (comma-separated)
   --skill, -s <names> Select specific skills from multi-skill repo (comma-separated;
                       supports glob patterns like "core-*", "test-?")
   --exclude <names>   Skip specific skills during install (comma-separated;
@@ -599,6 +616,8 @@ Examples:
   skillshare install ~/my-skill -T high          # Override block threshold for this run
 
 Selective install (non-interactive):
+  skillshare install org/agents --kind agent             # Agents only
+  skillshare install org/agents -a reviewer,tutor        # Specific agents
   skillshare install anthropics/skills -s pdf,commit     # Specific skills
   skillshare install anthropics/skills -s "core-*"       # Glob pattern
   skillshare install anthropics/skills --all             # All skills

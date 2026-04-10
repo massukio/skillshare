@@ -14,6 +14,7 @@ import (
 	"skillshare/internal/install"
 	"skillshare/internal/resource"
 	"skillshare/internal/sync"
+	"skillshare/internal/theme"
 	"skillshare/internal/ui"
 	"skillshare/internal/utils"
 )
@@ -382,10 +383,11 @@ func hasGroups(skills []skillEntry) bool {
 
 // displaySkillsVerbose displays skills in verbose mode, grouped by directory
 func displaySkillsVerbose(skills []skillEntry) {
+	a := theme.ANSI()
 	if !hasGroups(skills) {
 		// Flat display — no grouping needed
 		for _, s := range skills {
-			fmt.Printf("  %s%s%s\n", ui.Cyan, s.Name, ui.Reset)
+			fmt.Printf("  %s%s%s\n", a.Accent, s.Name, a.Reset)
 			printVerboseDetails(s, "    ")
 		}
 		return
@@ -397,7 +399,7 @@ func displaySkillsVerbose(skills []skillEntry) {
 			if i > 0 {
 				fmt.Println()
 			}
-			fmt.Printf("  %s%s/%s\n", ui.Dim, dir, ui.Reset)
+			fmt.Printf("  %s%s/%s\n", a.Dim, dir, a.Reset)
 		} else if i > 0 {
 			fmt.Println()
 		}
@@ -410,31 +412,33 @@ func displaySkillsVerbose(skills []skillEntry) {
 				indent = "  "
 				detailIndent = "    "
 			}
-			fmt.Printf("%s%s%s%s\n", indent, ui.Cyan, name, ui.Reset)
+			fmt.Printf("%s%s%s%s\n", indent, a.Accent, name, a.Reset)
 			printVerboseDetails(s, detailIndent)
 		}
 	}
 }
 
 func printVerboseDetails(s skillEntry, indent string) {
+	a := theme.ANSI()
 	if s.Disabled {
-		fmt.Printf("%s%sStatus:%s      %sdisabled%s\n", indent, ui.Dim, ui.Reset, ui.Dim, ui.Reset)
+		fmt.Printf("%s%sStatus:%s      %sdisabled%s\n", indent, a.Dim, a.Reset, a.Dim, a.Reset)
 	}
 	if s.RepoName != "" {
-		fmt.Printf("%s%sTracked repo:%s %s\n", indent, ui.Dim, ui.Reset, s.RepoName)
+		fmt.Printf("%s%sTracked repo:%s %s\n", indent, a.Dim, a.Reset, s.RepoName)
 	}
 	if s.Source != "" {
-		fmt.Printf("%s%sSource:%s      %s\n", indent, ui.Dim, ui.Reset, s.Source)
-		fmt.Printf("%s%sType:%s        %s\n", indent, ui.Dim, ui.Reset, s.Type)
-		fmt.Printf("%s%sInstalled:%s   %s\n", indent, ui.Dim, ui.Reset, s.InstalledAt)
+		fmt.Printf("%s%sSource:%s      %s\n", indent, a.Dim, a.Reset, s.Source)
+		fmt.Printf("%s%sType:%s        %s\n", indent, a.Dim, a.Reset, s.Type)
+		fmt.Printf("%s%sInstalled:%s   %s\n", indent, a.Dim, a.Reset, s.InstalledAt)
 	} else {
-		fmt.Printf("%s%sSource:%s      (local - no metadata)\n", indent, ui.Dim, ui.Reset)
+		fmt.Printf("%s%sSource:%s      (local - no metadata)\n", indent, a.Dim, a.Reset)
 	}
 	fmt.Println()
 }
 
 // displaySkillsCompact displays skills in compact mode, grouped by directory
 func displaySkillsCompact(skills []skillEntry) {
+	a := theme.ANSI()
 	if !hasGroups(skills) {
 		// Flat display — identical to previous behavior
 		maxNameLen := 0
@@ -445,7 +449,7 @@ func displaySkillsCompact(skills []skillEntry) {
 		}
 		for _, s := range skills {
 			suffix := getSkillSuffix(s)
-			format := fmt.Sprintf("  %s→%s %%-%ds  %s%%s%s\n", ui.Cyan, ui.Reset, maxNameLen, ui.Dim, ui.Reset)
+			format := fmt.Sprintf("  %s→%s %%-%ds  %s%%s%s\n", a.Accent, a.Reset, maxNameLen, a.Dim, a.Reset)
 			fmt.Printf(format, s.Name, suffix)
 		}
 		return
@@ -457,7 +461,7 @@ func displaySkillsCompact(skills []skillEntry) {
 			if i > 0 {
 				fmt.Println()
 			}
-			fmt.Printf("  %s%s/%s\n", ui.Dim, dir, ui.Reset)
+			fmt.Printf("  %s%s/%s\n", a.Dim, dir, a.Reset)
 		} else if i > 0 {
 			fmt.Println()
 		}
@@ -475,10 +479,10 @@ func displaySkillsCompact(skills []skillEntry) {
 			name := displayName(s, dir)
 			suffix := getSkillSuffix(s)
 			if dir != "" {
-				format := fmt.Sprintf("    %s→%s %%-%ds  %s%%s%s\n", ui.Cyan, ui.Reset, maxNameLen, ui.Dim, ui.Reset)
+				format := fmt.Sprintf("    %s→%s %%-%ds  %s%%s%s\n", a.Accent, a.Reset, maxNameLen, a.Dim, a.Reset)
 				fmt.Printf(format, name, suffix)
 			} else {
-				format := fmt.Sprintf("  %s→%s %%-%ds  %s%%s%s\n", ui.Cyan, ui.Reset, maxNameLen, ui.Dim, ui.Reset)
+				format := fmt.Sprintf("  %s→%s %%-%ds  %s%%s%s\n", a.Accent, a.Reset, maxNameLen, a.Dim, a.Reset)
 				fmt.Printf(format, name, suffix)
 			}
 		}

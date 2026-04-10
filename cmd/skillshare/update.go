@@ -140,6 +140,9 @@ func cmdUpdate(args []string) error {
 		}
 		cfg, loadErr := config.Load()
 		if loadErr != nil {
+			if hasFlag(rest, "--json") {
+				return writeJSONError(loadErr)
+			}
 			return loadErr
 		}
 		return cmdUpdateAgents(rest, cfg, start)
@@ -182,24 +185,15 @@ func cmdUpdate(args []string) error {
 
 	// In JSON mode, redirect all UI output to stderr early so the
 	// header, step, spinner, and handler output don't corrupt stdout.
-	var restoreJSONUI func()
-	restoreJSONUIIfNeeded := func() {
-		if restoreJSONUI != nil {
-			restoreJSONUI()
-			restoreJSONUI = nil
-		}
-	}
-	if opts.jsonOutput {
-		restoreJSONUI = suppressUIToDevnull()
-	}
-	defer restoreJSONUIIfNeeded()
+	jsonUI := newJSONUISuppressor(opts.jsonOutput)
+	defer jsonUI.Flush()
 
 	jsonWriteError := func(err error) error {
-		restoreJSONUIIfNeeded()
+		jsonUI.Flush()
 		return writeJSONError(err)
 	}
 	jsonWriteResult := func(result *updateResult, cmdErr error) error {
-		restoreJSONUIIfNeeded()
+		jsonUI.Flush()
 		return updateOutputJSON(result, opts.dryRun, start, cmdErr)
 	}
 

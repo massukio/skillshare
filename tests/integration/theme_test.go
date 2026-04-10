@@ -19,6 +19,9 @@ func TestList_SKILLSHARE_THEME_Light(t *testing.T) {
 	sb.CreateSkill("hello-world", map[string]string{
 		"SKILL.md": "---\nname: hello-world\ndescription: A test skill\n---\n# Hello",
 	})
+	sb.WriteConfig(`source: ` + sb.SourcePath + `
+targets: {}
+`)
 
 	result := sb.RunCLIEnv(
 		map[string]string{"SKILLSHARE_THEME": "light"},
@@ -45,6 +48,9 @@ func TestList_NO_COLOR(t *testing.T) {
 	sb.CreateSkill("hello", map[string]string{
 		"SKILL.md": "---\nname: hello\ndescription: A test skill\n---\n# H",
 	})
+	sb.WriteConfig(`source: ` + sb.SourcePath + `
+targets: {}
+`)
 
 	result := sb.RunCLIEnv(
 		map[string]string{"NO_COLOR": "1"},

@@ -2,12 +2,23 @@ package install
 
 import (
 	"fmt"
+	"os"
+	"path/filepath"
 	"strings"
 
 	"skillshare/internal/audit"
 )
 
-func auditInstalledSkill(destPath string, result *InstallResult, opts InstallOptions) error {
+// auditInstalledResource runs the audit gate shared by skill and agent installs.
+// scan performs the actual scan; cleanupOnBlock removes the installed artifact
+// when findings at/above threshold fire and --force is not set.
+func auditInstalledResource(
+	destPath string,
+	result *InstallResult,
+	opts InstallOptions,
+	scan func() (*audit.Result, error),
+	cleanupOnBlock func() error,
+) error {
 	if opts.SkipAudit {
 		result.AuditSkipped = true
 		result.AuditThreshold = opts.AuditThreshold
@@ -21,12 +32,7 @@ func auditInstalledSkill(destPath string, result *InstallResult, opts InstallOpt
 	}
 	result.AuditThreshold = threshold
 
-	var scanResult *audit.Result
-	if opts.AuditProjectRoot != "" {
-		scanResult, err = audit.ScanSkillForProject(destPath, opts.AuditProjectRoot)
-	} else {
-		scanResult, err = audit.ScanSkill(destPath)
-	}
+	scanResult, err := scan()
 	if err != nil {
 		// Non-fatal: warn but don't block
 		result.Warnings = append(result.Warnings, fmt.Sprintf("audit scan error: %v", err))
@@ -44,7 +50,6 @@ func auditInstalledSkill(destPath string, result *InstallResult, opts InstallOpt
 		return nil
 	}
 
-	// Build warning messages for all findings (include snippet for context)
 	for _, f := range scanResult.Findings {
 		msg := fmt.Sprintf("audit %s: %s (%s:%d)", f.Severity, f.Message, f.File, f.Line)
 		if f.Snippet != "" {
@@ -53,16 +58,15 @@ func auditInstalledSkill(destPath string, result *InstallResult, opts InstallOpt
 		result.Warnings = append(result.Warnings, msg)
 	}
 
-	// Findings at or above threshold block installation unless --force.
 	if scanResult.IsBlocked && !opts.Force {
 		details := blockedFindingDetails(scanResult.Findings, threshold)
-		if removeErr := removeAll(destPath); removeErr != nil {
+		if cleanupErr := cleanupOnBlock(); cleanupErr != nil {
 			return fmt.Errorf(
 				"security audit failed — findings at/above %s detected:\n%s\n\nAutomatic cleanup failed for %s: %v\nManual removal is required: %w",
 				threshold,
 				strings.Join(details, "\n"),
 				destPath,
-				removeErr,
+				cleanupErr,
 				audit.ErrBlocked,
 			)
 		}
@@ -83,6 +87,50 @@ func auditInstalledSkill(destPath string, result *InstallResult, opts InstallOpt
 	}
 
 	return nil
+}
+
+func auditInstalledSkill(destPath string, result *InstallResult, opts InstallOptions) error {
+	scan := func() (*audit.Result, error) {
+		if opts.AuditProjectRoot != "" {
+			return audit.ScanSkillForProject(destPath, opts.AuditProjectRoot)
+		}
+		return audit.ScanSkill(destPath)
+	}
+	cleanup := func() error { return removeAll(destPath) }
+	return auditInstalledResource(destPath, result, opts, scan, cleanup)
+}
+
+func auditInstalledAgent(destFile string, result *InstallResult, opts InstallOptions) error {
+	scan := func() (*audit.Result, error) {
+		if opts.AuditProjectRoot != "" {
+			return audit.ScanFileForProject(destFile, opts.AuditProjectRoot)
+		}
+		return audit.ScanFile(destFile)
+	}
+	// Agents are single .md files. After removing the file, walk up any
+	// newly-empty parent directories (e.g. into-subdir) so a blocked install
+	// leaves nothing behind.
+	cleanup := func() error {
+		if err := removeAll(destFile); err != nil {
+			return err
+		}
+		cleanEmptyInstallParents(destFile, opts.SourceDir)
+		return nil
+	}
+	return auditInstalledResource(destFile, result, opts, scan, cleanup)
+}
+
+func cleanEmptyInstallParents(path, stopAt string) {
+	stopAt = filepath.Clean(stopAt)
+	dir := filepath.Dir(filepath.Clean(path))
+	for dir != stopAt && dir != "." && dir != "/" {
+		entries, err := os.ReadDir(dir)
+		if err != nil || len(entries) > 0 {
+			break
+		}
+		_ = os.Remove(dir)
+		dir = filepath.Dir(dir)
+	}
 }
 
 // auditTrackedRepo scans an entire tracked repo directory for security threats.

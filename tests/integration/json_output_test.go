@@ -488,6 +488,88 @@ func TestInstall_JSON_FromConfig_PureJSON(t *testing.T) {
 	assertPureJSON(t, stdout)
 }
 
+func TestInstall_Project_JSON_Agent_PureJSON(t *testing.T) {
+	sb := testutil.NewSandbox(t)
+	defer sb.Cleanup()
+
+	projectDir := sb.Root + "/agent-project"
+	agentSource := sb.Root + "/agent-bundle"
+	if err := os.MkdirAll(projectDir, 0o755); err != nil {
+		t.Fatalf("mkdir project: %v", err)
+	}
+	sb.WriteFile(agentSource+"/reviewer.md", "# Reviewer\n")
+	initGitRepo(t, agentSource)
+
+	result := sb.RunCLIInDir(projectDir, "install", "file://"+agentSource, "--kind", "agent", "-p", "--json")
+	result.AssertSuccess(t)
+
+	stdout := strings.TrimSpace(result.Stdout)
+	assertPureJSON(t, stdout)
+
+	output := parseJSON(t, result.Stdout)
+	skills, ok := output["skills"].([]any)
+	if !ok {
+		t.Fatalf("skills should be an array, got %T", output["skills"])
+	}
+	if len(skills) != 1 || skills[0] != "reviewer" {
+		t.Fatalf("expected installed agent in JSON payload, got %v", skills)
+	}
+
+	if _, err := os.Stat(projectDir + "/.skillshare/agents/reviewer.md"); err != nil {
+		t.Fatalf("expected project agent to be installed: %v", err)
+	}
+}
+
+func TestUpdate_Agents_JSON_ReportsFinalStatus(t *testing.T) {
+	sb := testutil.NewSandbox(t)
+	defer sb.Cleanup()
+
+	sb.WriteConfig(`source: ` + sb.SourcePath + "\ntargets: {}\n")
+
+	repoDir := filepath.Join(sb.Home, "json-agent-repo")
+	if err := os.MkdirAll(repoDir, 0o755); err != nil {
+		t.Fatalf("mkdir repo: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(repoDir, "reviewer.md"), []byte("# Reviewer v1\n"), 0o644); err != nil {
+		t.Fatalf("write initial agent: %v", err)
+	}
+	initGitRepo(t, repoDir)
+
+	installResult := sb.RunCLI("install", "file://"+repoDir, "--kind", "agent", "--skip-audit")
+	installResult.AssertSuccess(t)
+
+	if err := os.WriteFile(filepath.Join(repoDir, "reviewer.md"), []byte("# Reviewer v2\n"), 0o644); err != nil {
+		t.Fatalf("write updated agent: %v", err)
+	}
+	run(t, repoDir, "git", "add", "reviewer.md")
+	run(t, repoDir, "git", "commit", "-m", "update reviewer")
+
+	result := sb.RunCLI("update", "agents", "--all", "--json")
+	result.AssertSuccess(t)
+
+	stdout := strings.TrimSpace(result.Stdout)
+	assertPureJSON(t, stdout)
+
+	output := parseJSON(t, result.Stdout)
+	agents, ok := output["agents"].([]any)
+	if !ok {
+		t.Fatalf("agents should be an array, got %T", output["agents"])
+	}
+	if len(agents) != 1 {
+		t.Fatalf("expected 1 agent result, got %d", len(agents))
+	}
+	item, ok := agents[0].(map[string]any)
+	if !ok {
+		t.Fatalf("agent result should be an object, got %T", agents[0])
+	}
+	if item["name"] != "reviewer" {
+		t.Fatalf("expected agent name reviewer, got %v", item["name"])
+	}
+	if item["status"] != "updated" {
+		t.Fatalf("expected final status updated, got %v", item["status"])
+	}
+}
+
 // --- diff --project --json (P1: spinner/progress must not pollute stdout) ---
 
 func TestDiff_Project_JSON_PureJSON(t *testing.T) {

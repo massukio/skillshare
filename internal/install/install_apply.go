@@ -36,6 +36,83 @@ func installAgentRelativePath(agent AgentInfo) string {
 	return strings.TrimPrefix(filepath.ToSlash(agent.Path), "agents/")
 }
 
+func resolveDiscoveredAgentSourcePath(discovery *DiscoveryResult, agent AgentInfo) string {
+	sourceRoot := discoverySourceRoot(discovery)
+	if discovery.Source.HasSubdir() {
+		return filepath.Join(sourceRoot, discovery.Source.Subdir, agent.Path)
+	}
+	return filepath.Join(sourceRoot, agent.Path)
+}
+
+func buildDiscoveredAgentSource(discovery *DiscoveryResult, agent AgentInfo) *Source {
+	return &Source{
+		Type:     discovery.Source.Type,
+		Raw:      buildDiscoverySkillSource(discovery.Source, agent.Path),
+		CloneURL: discovery.Source.CloneURL,
+		Subdir:   agent.Path,
+		Name:     agent.Name,
+		Branch:   discovery.Source.Branch,
+	}
+}
+
+func writeDiscoveredAgentMetadata(discovery *DiscoveryResult, agent AgentInfo, destFile, sourceDir string) error {
+	source := buildDiscoveredAgentSource(discovery, agent)
+	meta := NewMetaFromSource(source)
+	meta.Kind = "agent"
+	if discovery.CommitHash != "" {
+		meta.Version = discovery.CommitHash
+	}
+	if hash, hashErr := computeSingleFileHash(destFile); hashErr == nil {
+		meta.FileHashes = map[string]string{filepath.Base(destFile): hash}
+	}
+	return WriteMetaToStore(sourceDir, destFile, meta)
+}
+
+func installAgentFromDiscoveryInternal(discovery *DiscoveryResult, agent AgentInfo, destFile string, opts InstallOptions, writeMeta bool) (*InstallResult, error) {
+	result := &InstallResult{
+		SkillName: agent.Name,
+		Source:    buildDiscoverySkillSource(discovery.Source, agent.Path),
+		SkillPath: destFile,
+	}
+
+	if opts.DryRun {
+		result.Action = "would install"
+		return result, nil
+	}
+
+	if err := os.MkdirAll(filepath.Dir(destFile), 0755); err != nil {
+		return nil, fmt.Errorf("failed to create agents directory: %w", err)
+	}
+
+	if _, err := os.Stat(destFile); err == nil && !opts.Force {
+		result.Action = "skipped"
+		result.Warnings = append(result.Warnings, "agent already exists (use --force to overwrite)")
+		return result, nil
+	}
+
+	data, err := os.ReadFile(resolveDiscoveredAgentSourcePath(discovery, agent))
+	if err != nil {
+		return nil, fmt.Errorf("failed to read agent %s: %w", agent.FileName, err)
+	}
+
+	if err := os.WriteFile(destFile, data, 0644); err != nil {
+		return nil, fmt.Errorf("failed to write agent %s: %w", agent.FileName, err)
+	}
+
+	if err := auditInstalledAgent(destFile, result, opts); err != nil {
+		return nil, err
+	}
+
+	if writeMeta {
+		if err := writeDiscoveredAgentMetadata(discovery, agent, destFile, opts.SourceDir); err != nil {
+			result.Warnings = append(result.Warnings, fmt.Sprintf("failed to write metadata: %v", err))
+		}
+	}
+
+	result.Action = "installed"
+	return result, nil
+}
+
 func installImpl(source *Source, destPath string, opts InstallOptions) (*InstallResult, error) {
 	// Derive SourceDir from destPath if not set by caller.
 	// destPath = sourceDir[/into]/skillName, so strip Into + skillName.
@@ -413,71 +490,63 @@ func checkSkillFile(skillPath string, result *InstallResult) {
 // InstallAgentFromDiscovery installs a single agent (.md file) from a discovery result.
 // Unlike skill install (directory copy), agent install copies a single file.
 func InstallAgentFromDiscovery(discovery *DiscoveryResult, agent AgentInfo, destDir string, opts InstallOptions) (*InstallResult, error) {
+	destFile := filepath.Join(destDir, filepath.FromSlash(installAgentRelativePath(agent)))
+	return installAgentFromDiscoveryInternal(discovery, agent, destFile, opts, true)
+}
+
+func UpdateAgentFromDiscovery(discovery *DiscoveryResult, agent AgentInfo, destDir string, opts InstallOptions) (*InstallResult, error) {
+	relPath := installAgentRelativePath(agent)
+	destFile := filepath.Join(destDir, filepath.FromSlash(relPath))
 	result := &InstallResult{
 		SkillName: agent.Name,
 		Source:    buildDiscoverySkillSource(discovery.Source, agent.Path),
+		SkillPath: destFile,
 	}
 
-	destFile := filepath.Join(destDir, filepath.FromSlash(installAgentRelativePath(agent)))
-	result.SkillPath = destFile
-
 	if opts.DryRun {
-		result.Action = "would install"
+		result.Action = "would reinstall from source"
 		return result, nil
+	}
+
+	tempDir, err := os.MkdirTemp("", "skillshare-agent-update-*")
+	if err != nil {
+		return nil, fmt.Errorf("failed to create temp directory: %w", err)
+	}
+	defer os.RemoveAll(tempDir)
+
+	tempFile := filepath.Join(tempDir, filepath.FromSlash(relPath))
+	innerOpts := opts
+	innerOpts.DryRun = false
+	innerOpts.Update = false
+	innerOpts.SourceDir = tempDir
+
+	innerResult, err := installAgentFromDiscoveryInternal(discovery, agent, tempFile, innerOpts, false)
+	if err != nil {
+		return nil, err
 	}
 
 	if err := os.MkdirAll(filepath.Dir(destFile), 0755); err != nil {
 		return nil, fmt.Errorf("failed to create agents directory: %w", err)
 	}
-
-	// Check if file exists
-	if _, err := os.Stat(destFile); err == nil && !opts.Force {
-		result.Action = "skipped"
-		result.Warnings = append(result.Warnings, "agent already exists (use --force to overwrite)")
-		return result, nil
+	// os.Rename is atomic on POSIX and overwrites the destination. If it
+	// fails (e.g. cross-device EXDEV on exotic setups), fall back to copy.
+	if err := os.Rename(tempFile, destFile); err != nil {
+		data, readErr := os.ReadFile(tempFile)
+		if readErr != nil {
+			return nil, fmt.Errorf("failed to read staged agent: %w", readErr)
+		}
+		if writeErr := os.WriteFile(destFile, data, 0644); writeErr != nil {
+			return nil, fmt.Errorf("failed to move updated agent: %w", writeErr)
+		}
 	}
 
-	// Determine source path in temp repo
-	sourceRoot := discoverySourceRoot(discovery)
-	var srcPath string
-	if discovery.Source.HasSubdir() {
-		srcPath = filepath.Join(sourceRoot, discovery.Source.Subdir, agent.Path)
-	} else {
-		srcPath = filepath.Join(sourceRoot, agent.Path)
+	if err := writeDiscoveredAgentMetadata(discovery, agent, destFile, opts.SourceDir); err != nil {
+		innerResult.Warnings = append(innerResult.Warnings, fmt.Sprintf("failed to write metadata: %v", err))
 	}
 
-	data, err := os.ReadFile(srcPath)
-	if err != nil {
-		return nil, fmt.Errorf("failed to read agent %s: %w", agent.FileName, err)
-	}
-
-	if err := os.WriteFile(destFile, data, 0644); err != nil {
-		return nil, fmt.Errorf("failed to write agent %s: %w", agent.FileName, err)
-	}
-
-	// Write metadata to centralized .metadata.json store.
-	source := &Source{
-		Type:     discovery.Source.Type,
-		Raw:      result.Source,
-		CloneURL: discovery.Source.CloneURL,
-		Subdir:   agent.Path,
-		Name:     agent.Name,
-	}
-	meta := NewMetaFromSource(source)
-	meta.Kind = "agent"
-	if discovery.CommitHash != "" {
-		meta.Version = discovery.CommitHash
-	}
-	if hash, hashErr := computeSingleFileHash(destFile); hashErr == nil {
-		meta.FileHashes = map[string]string{filepath.Base(destFile): hash}
-	}
-
-	if err := WriteMetaToStore(opts.SourceDir, destFile, meta); err != nil {
-		result.Warnings = append(result.Warnings, fmt.Sprintf("failed to write metadata: %v", err))
-	}
-
-	result.Action = "installed"
-	return result, nil
+	innerResult.SkillPath = destFile
+	innerResult.Action = "updated"
+	return innerResult, nil
 }
 
 // computeSingleFileHash computes the sha256 hash for a single file.

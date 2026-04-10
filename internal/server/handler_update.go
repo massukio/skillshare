@@ -230,11 +230,18 @@ func (s *Server) updateAgent(name string, force, skipAudit bool) updateResultIte
 	}
 
 	destDir := agentsSource
-	res, err := install.InstallAgentFromDiscovery(discovery, *target, destDir, install.InstallOptions{
-		Kind:      "agent",
-		Force:     true,
-		SourceDir: agentsSource,
-	})
+	opts := install.InstallOptions{
+		Kind:           "agent",
+		Force:          force,
+		Update:         true,
+		SkipAudit:      skipAudit,
+		AuditThreshold: s.updateAuditThreshold(),
+		SourceDir:      agentsSource,
+	}
+	if s.IsProjectMode() {
+		opts.AuditProjectRoot = s.projectRoot
+	}
+	res, err := install.UpdateAgentFromDiscovery(discovery, *target, destDir, opts)
 	if err != nil {
 		return updateResultItem{Name: metaKey, Kind: "agent", Action: "error", Message: err.Error()}
 	}

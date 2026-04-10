@@ -252,8 +252,11 @@ func handleGitInstall(source *install.Source, cfg *config.Config, opts install.I
 	// Pure agent repo — no skills, only agents
 	if len(discovery.Skills) == 0 && len(discovery.Agents) > 0 {
 		ui.StepEnd("Found", fmt.Sprintf("%d agent(s)", len(discovery.Agents)))
-		agentsDir := agentsDirWithInto(cfg.EffectiveAgentsSource(), opts)
-		return handleAgentInstall(discovery, agentsDir, opts, logSummary)
+		agentsRoot := cfg.EffectiveAgentsSource()
+		agentsDir := agentsDirWithInto(agentsRoot, opts)
+		agentOpts := opts
+		agentOpts.SourceDir = agentsRoot
+		return handleAgentInstall(discovery, agentsDir, agentOpts, logSummary)
 	}
 
 	foundMsg := fmt.Sprintf("%d skill(s)", len(discovery.Skills))
@@ -1154,13 +1157,16 @@ func installDiscoveredAgents(discovery *install.DiscoveryResult, cfg *config.Con
 		return
 	}
 
-	agentsDir := agentsDirWithInto(cfg.EffectiveAgentsSource(), opts)
+	agentsRoot := cfg.EffectiveAgentsSource()
+	agentsDir := agentsDirWithInto(agentsRoot, opts)
+	agentOpts := opts
+	agentOpts.SourceDir = agentsRoot
 	fmt.Println()
 	ui.Header("Installing agents")
 
 	for _, agent := range discovery.Agents {
 		spinner := ui.StartSpinner(fmt.Sprintf("Installing agent %s...", agent.Name))
-		result, err := install.InstallAgentFromDiscovery(discovery, agent, agentsDir, opts)
+		result, err := install.InstallAgentFromDiscovery(discovery, agent, agentsDir, agentOpts)
 		spinner.Stop()
 		if err != nil {
 			ui.ErrorMsg("Failed to install agent %s: %v", agent.Name, err)
@@ -1168,7 +1174,7 @@ func installDiscoveredAgents(discovery *install.DiscoveryResult, cfg *config.Con
 		}
 		if result.Action == "skipped" {
 			ui.StepSkip(agent.Name, strings.Join(result.Warnings, "; "))
-		} else if opts.DryRun {
+		} else if agentOpts.DryRun {
 			ui.Warning("[dry-run] Would install agent: %s", agent.Name)
 		} else {
 			ui.SuccessMsg("Installed agent: %s", agent.Name)

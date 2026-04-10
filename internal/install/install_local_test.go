@@ -235,6 +235,52 @@ func TestInstall_LocalPath_WithAudit(t *testing.T) {
 	}
 }
 
+func TestInstallAgentFromDiscovery_HighFindingBlocked(t *testing.T) {
+	tmp := t.TempDir()
+	repoDir := filepath.Join(tmp, "repo")
+	if err := os.MkdirAll(repoDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(repoDir, "reviewer.md"), []byte("# Reviewer\nsudo apt-get install -y jq\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	discovery := &DiscoveryResult{
+		RepoPath: repoDir,
+		Source: &Source{
+			Type: SourceTypeLocalPath,
+			Raw:  repoDir,
+			Path: repoDir,
+		},
+	}
+
+	destRoot := filepath.Join(tmp, "agents")
+	_, err := InstallAgentFromDiscovery(discovery, AgentInfo{
+		Name:     "reviewer",
+		Path:     "reviewer.md",
+		FileName: "reviewer.md",
+	}, destRoot, InstallOptions{
+		SourceDir:      destRoot,
+		AuditThreshold: audit.SeverityHigh,
+	})
+	if err == nil {
+		t.Fatal("expected audit block for agent install")
+	}
+	if !errors.Is(err, audit.ErrBlocked) {
+		t.Fatalf("expected error to wrap audit.ErrBlocked, got: %v", err)
+	}
+	if _, statErr := os.Stat(filepath.Join(destRoot, "reviewer.md")); !os.IsNotExist(statErr) {
+		t.Fatalf("expected blocked agent file to be removed, stat err=%v", statErr)
+	}
+
+	store, loadErr := LoadMetadata(destRoot)
+	if loadErr == nil {
+		if entry := store.Get("reviewer"); entry != nil {
+			t.Fatalf("expected no metadata for blocked agent install, got %+v", entry)
+		}
+	}
+}
+
 func TestInstall_LocalPath_HighFinding_BelowCriticalThresholdWarns(t *testing.T) {
 	tmp := t.TempDir()
 	srcDir := createLocalSkillSource(t, tmp, "high-finding")

@@ -60,7 +60,8 @@ targets:
     path: ` + targetPath + `
 `)
 
-	result := sb.RunCLI("doctor")
+	// Pin the theme so doctor doesn't warn about no-TTY fallback in CI.
+	result := sb.RunCLIEnv(map[string]string{"SKILLSHARE_THEME": "dark"}, "doctor")
 
 	result.AssertSuccess(t)
 	result.AssertOutputContains(t, "All checks passed")

@@ -222,6 +222,7 @@ Most commands accept a `agents` positional argument or `--kind agent` flag to sc
 | `audit agents` | `skillshare audit agents` | Security scan agents |
 | `sync agents` | `skillshare sync agents` | Sync only agents to targets |
 | `collect agents` | `skillshare collect agents claude` | Collect local target agents back to source |
+| `update agents` | `skillshare update agents --all` | Update tracked agent repos and metadata-backed agents |
 | `enable --kind agent` | `skillshare enable --kind agent tutor` | Re-enable a disabled agent |
 | `disable --kind agent` | `skillshare disable --kind agent tutor` | Disable an agent via `.agentignore` |
 | `install --kind agent` | `skillshare install repo --kind agent` | Install only agents from a repo |
@@ -263,6 +264,9 @@ skillshare init -p
 
 # Install agents into project
 skillshare install github.com/user/repo --kind agent -p
+
+# Update project agents in place
+skillshare update agents --all -p
 
 # Sync project agents
 skillshare sync -p

@@ -17,27 +17,55 @@ import (
 
 // cmdUpdateAgents handles "skillshare update agents [name|--all]".
 func cmdUpdateAgents(args []string, cfg *config.Config, start time.Time) error {
+	jsonRequested := hasFlag(args, "--json")
 	opts, showHelp, parseErr := parseUpdateAgentArgs(args)
 	if showHelp {
 		printUpdateHelp()
 		return nil
 	}
 	if parseErr != nil {
+		if jsonRequested {
+			return writeJSONError(parseErr)
+		}
 		return parseErr
+	}
+	if opts.threshold == "" {
+		opts.threshold = cfg.Audit.BlockThreshold
+	}
+
+	jsonUI := newJSONUISuppressor(opts.jsonOutput)
+	defer jsonUI.Flush()
+
+	jsonWriteResult := func(items []agentUpdateItem, cmdErr error) error {
+		jsonUI.Flush()
+		return updateAgentsOutputJSON(items, opts.dryRun, start, cmdErr)
+	}
+	failJSON := func(err error) error {
+		if opts.jsonOutput {
+			jsonUI.Flush()
+			return writeJSONError(err)
+		}
+		return err
 	}
 
 	agentsDir := cfg.EffectiveAgentsSource()
 	if _, err := os.Stat(agentsDir); err != nil {
 		if os.IsNotExist(err) {
+			if opts.jsonOutput {
+				return jsonWriteResult(nil, nil)
+			}
 			ui.Info("No agents source directory (%s)", agentsDir)
 			return nil
 		}
-		return fmt.Errorf("cannot access agents source: %w", err)
+		return failJSON(fmt.Errorf("cannot access agents source: %w", err))
 	}
 
 	// Discover agents and check status
 	results := check.CheckAgents(agentsDir)
 	if len(results) == 0 {
+		if opts.jsonOutput {
+			return jsonWriteResult(nil, nil)
+		}
 		ui.Info("No agents found")
 		return nil
 	}
@@ -46,7 +74,7 @@ func cmdUpdateAgents(args []string, cfg *config.Config, start time.Time) error {
 	if len(opts.names) > 0 {
 		results = filterAgentCheckResults(results, opts.names)
 		if len(results) == 0 {
-			return fmt.Errorf("no matching agents found: %s", strings.Join(opts.names, ", "))
+			return failJSON(fmt.Errorf("no matching agents found: %s", strings.Join(opts.names, ", ")))
 		}
 	}
 
@@ -55,10 +83,10 @@ func cmdUpdateAgents(args []string, cfg *config.Config, start time.Time) error {
 		var err error
 		results, err = filterAgentResultsByGroups(results, opts.groups, agentsDir)
 		if err != nil {
-			return err
+			return failJSON(err)
 		}
 		if len(results) == 0 {
-			return fmt.Errorf("no agents found in group(s): %s", strings.Join(opts.groups, ", "))
+			return failJSON(fmt.Errorf("no agents found in group(s): %s", strings.Join(opts.groups, ", ")))
 		}
 	}
 
@@ -66,6 +94,9 @@ func cmdUpdateAgents(args []string, cfg *config.Config, start time.Time) error {
 	tracked := collectTrackedAgentResults(results)
 
 	if len(tracked) == 0 {
+		if opts.jsonOutput {
+			return jsonWriteResult(agentUpdateItemsFromCheckResults(results), nil)
+		}
 		ui.Info("No tracked agents to update (all are local)")
 		return nil
 	}
@@ -77,6 +108,7 @@ func cmdUpdateAgents(args []string, cfg *config.Config, start time.Time) error {
 	} else {
 		check.EnrichAgentResultsWithRemote(tracked, nil)
 	}
+	mergeTrackedAgentResults(results, tracked)
 
 	// Find agents with updates available
 	var updatable []check.AgentCheckResult
@@ -85,14 +117,13 @@ func cmdUpdateAgents(args []string, cfg *config.Config, start time.Time) error {
 			updatable = append(updatable, r)
 		}
 	}
+	finalItems := agentUpdateItemsFromCheckResults(results)
 
 	if len(updatable) == 0 {
-		if !opts.jsonOutput {
-			ui.Success("All agents are up to date")
-		}
 		if opts.jsonOutput {
-			return updateAgentsOutputJSON(nil, opts.dryRun, start, nil)
+			return jsonWriteResult(finalItems, nil)
 		}
+		ui.Success("All agents are up to date")
 		return nil
 	}
 
@@ -104,7 +135,11 @@ func cmdUpdateAgents(args []string, cfg *config.Config, start time.Time) error {
 	}
 
 	// Update agents, batching by repo URL to share git clones.
-	var updated, failed int
+	var (
+		updated      int
+		failed       int
+		updatedItems []agentUpdateItem
+	)
 	if opts.dryRun {
 		for _, r := range updatable {
 			if !opts.jsonOutput {
@@ -112,7 +147,8 @@ func cmdUpdateAgents(args []string, cfg *config.Config, start time.Time) error {
 			}
 		}
 	} else {
-		updated, failed = batchUpdateAgents(agentsDir, updatable, !opts.jsonOutput)
+		updatedItems, updated, failed = batchUpdateAgents(agentsDir, updatable, opts, "", !opts.jsonOutput)
+		finalItems = mergeAgentUpdateItems(finalItems, updatedItems)
 	}
 
 	if !opts.jsonOutput && !opts.dryRun {
@@ -123,7 +159,11 @@ func cmdUpdateAgents(args []string, cfg *config.Config, start time.Time) error {
 	logUpdateAgentOp(config.ConfigPath(), len(updatable), updated, failed, opts.dryRun, start)
 
 	if opts.jsonOutput {
-		return updateAgentsOutputJSON(updatable, opts.dryRun, start, nil)
+		var cmdErr error
+		if failed > 0 {
+			cmdErr = fmt.Errorf("%d agent(s) failed to update", failed)
+		}
+		return jsonWriteResult(finalItems, cmdErr)
 	}
 
 	if failed > 0 {
@@ -140,13 +180,23 @@ type agentRepoKey struct {
 	repoSubdir string
 }
 
+type agentUpdateItem struct {
+	Name    string `json:"name"`
+	Source  string `json:"source,omitempty"`
+	Status  string `json:"status"`
+	Message string `json:"message,omitempty"`
+	Error   string `json:"error,omitempty"`
+}
+
 // batchUpdateAgents groups agents by repo URL and clones once per group.
 // Agents with no RepoURL fall back to per-agent reinstallAgent.
-func batchUpdateAgents(agentsDir string, agents []check.AgentCheckResult, verbose bool) (updated, failed int) {
+func batchUpdateAgents(agentsDir string, agents []check.AgentCheckResult, opts *updateAgentArgs, projectRoot string, verbose bool) ([]agentUpdateItem, int, int) {
 	store := install.LoadMetadataOrNew(agentsDir)
 	trackedRepos := map[string][]check.AgentCheckResult{}
 	groups := map[agentRepoKey][]check.AgentCheckResult{}
 	var noRepo []check.AgentCheckResult
+	var items []agentUpdateItem
+	updated, failed := 0, 0
 
 	for _, r := range agents {
 		if r.RepoPath != "" {
@@ -181,12 +231,24 @@ func batchUpdateAgents(agentsDir string, agents []check.AgentCheckResult, verbos
 
 	for repoPath, members := range trackedRepos {
 		uc := &updateContext{
-			sourcePath: agentsDir,
-			opts:       &updateOptions{},
+			sourcePath:  agentsDir,
+			projectRoot: projectRoot,
+			opts: &updateOptions{
+				force:     opts.force,
+				skipAudit: opts.skipAudit,
+				threshold: opts.threshold,
+			},
 		}
 		ok, _, err := updateTrackedRepoQuick(uc, repoPath)
 		if err != nil {
 			for _, m := range members {
+				items = append(items, agentUpdateItem{
+					Name:    m.Name,
+					Source:  m.Source,
+					Status:  "failed",
+					Message: "tracked repo update failed",
+					Error:   err.Error(),
+				})
 				if verbose {
 					ui.Error("  %s: %v", m.Name, err)
 				}
@@ -195,9 +257,23 @@ func batchUpdateAgents(agentsDir string, agents []check.AgentCheckResult, verbos
 			continue
 		}
 		if !ok {
+			for _, m := range members {
+				items = append(items, agentUpdateItem{
+					Name:    m.Name,
+					Source:  m.Source,
+					Status:  "skipped",
+					Message: "up-to-date",
+				})
+			}
 			continue
 		}
 		for _, m := range members {
+			items = append(items, agentUpdateItem{
+				Name:    m.Name,
+				Source:  m.Source,
+				Status:  "updated",
+				Message: "tracked repo updated",
+			})
 			if verbose {
 				ui.Success("  %s: updated", m.Name)
 			}
@@ -222,6 +298,13 @@ func batchUpdateAgents(agentsDir string, agents []check.AgentCheckResult, verbos
 		}
 		if discErr != nil {
 			for _, m := range members {
+				items = append(items, agentUpdateItem{
+					Name:    m.Name,
+					Source:  m.Source,
+					Status:  "failed",
+					Message: "discovery failed",
+					Error:   "discovery failed: " + discErr.Error(),
+				})
 				if verbose {
 					ui.Error("  %s: discovery failed: %v", m.Name, discErr)
 				}
@@ -243,6 +326,13 @@ func batchUpdateAgents(agentsDir string, agents []check.AgentCheckResult, verbos
 				if verbose {
 					ui.Error("  %s: not found in repository", m.Name)
 				}
+				items = append(items, agentUpdateItem{
+					Name:    m.Name,
+					Source:  m.Source,
+					Status:  "failed",
+					Message: "not found in repository",
+					Error:   "not found in repository",
+				})
 				failed++
 				continue
 			}
@@ -252,13 +342,34 @@ func batchUpdateAgents(agentsDir string, agents []check.AgentCheckResult, verbos
 				destDir = filepath.Join(agentsDir, dir)
 			}
 
-			opts := install.InstallOptions{Kind: "agent", Force: true, SourceDir: agentsDir}
-			if _, err := install.InstallAgentFromDiscovery(discovery, *target, destDir, opts); err != nil {
+			installOpts := install.InstallOptions{
+				Kind:             "agent",
+				Force:            opts.force,
+				Update:           true,
+				SkipAudit:        opts.skipAudit,
+				AuditThreshold:   opts.threshold,
+				AuditProjectRoot: projectRoot,
+				SourceDir:        agentsDir,
+			}
+			if _, err := install.UpdateAgentFromDiscovery(discovery, *target, destDir, installOpts); err != nil {
+				items = append(items, agentUpdateItem{
+					Name:    m.Name,
+					Source:  m.Source,
+					Status:  "failed",
+					Message: "update failed",
+					Error:   err.Error(),
+				})
 				if verbose {
 					ui.Error("  %s: %v", m.Name, err)
 				}
 				failed++
 			} else {
+				items = append(items, agentUpdateItem{
+					Name:    m.Name,
+					Source:  m.Source,
+					Status:  "updated",
+					Message: "updated",
+				})
 				if verbose {
 					ui.Success("  %s: updated", m.Name)
 				}
@@ -271,12 +382,25 @@ func batchUpdateAgents(agentsDir string, agents []check.AgentCheckResult, verbos
 
 	// Fallback: agents without RepoURL
 	for _, r := range noRepo {
-		if err := reinstallAgent(agentsDir, r, store); err != nil {
+		if err := reinstallAgent(agentsDir, r, store, opts, projectRoot); err != nil {
+			items = append(items, agentUpdateItem{
+				Name:    r.Name,
+				Source:  r.Source,
+				Status:  "failed",
+				Message: "update failed",
+				Error:   err.Error(),
+			})
 			if verbose {
 				ui.Error("  %s: %v", r.Name, err)
 			}
 			failed++
 		} else {
+			items = append(items, agentUpdateItem{
+				Name:    r.Name,
+				Source:  r.Source,
+				Status:  "updated",
+				Message: "updated",
+			})
 			if verbose {
 				ui.Success("  %s: updated", r.Name)
 			}
@@ -284,14 +408,14 @@ func batchUpdateAgents(agentsDir string, agents []check.AgentCheckResult, verbos
 		}
 	}
 
-	return updated, failed
+	return items, updated, failed
 }
 
 // reinstallAgent re-installs an agent from its recorded source using
 // discovery + InstallAgentFromDiscovery (single-file copy), not the
 // directory-based skill installer.
 // Used as fallback for agents without RepoURL in the batch path.
-func reinstallAgent(agentsDir string, r check.AgentCheckResult, store *install.MetadataStore) error {
+func reinstallAgent(agentsDir string, r check.AgentCheckResult, store *install.MetadataStore, opts *updateAgentArgs, projectRoot string) error {
 	entry := store.GetByPath(r.Name)
 	if entry == nil || entry.Source == "" {
 		return fmt.Errorf("no source metadata for agent %q", r.Name)
@@ -344,11 +468,15 @@ func reinstallAgent(agentsDir string, r check.AgentCheckResult, store *install.M
 	}
 
 	installOpts := install.InstallOptions{
-		Kind:      "agent",
-		Force:     true,
-		SourceDir: agentsDir,
+		Kind:             "agent",
+		Force:            opts.force,
+		Update:           true,
+		SkipAudit:        opts.skipAudit,
+		AuditThreshold:   opts.threshold,
+		AuditProjectRoot: projectRoot,
+		SourceDir:        agentsDir,
 	}
-	_, installErr := install.InstallAgentFromDiscovery(discovery, *targetAgent, destDir, installOpts)
+	_, installErr := install.UpdateAgentFromDiscovery(discovery, *targetAgent, destDir, installOpts)
 	return installErr
 }
 
@@ -358,6 +486,9 @@ type updateAgentArgs struct {
 	groups     []string
 	all        bool
 	dryRun     bool
+	force      bool
+	skipAudit  bool
+	threshold  string
 	jsonOutput bool
 }
 
@@ -366,10 +497,24 @@ func parseUpdateAgentArgs(args []string) (*updateAgentArgs, bool, error) {
 	for i := 0; i < len(args); i++ {
 		arg := args[i]
 		switch {
-		case arg == "--all":
+		case arg == "--all" || arg == "-a":
 			opts.all = true
 		case arg == "--dry-run" || arg == "-n":
 			opts.dryRun = true
+		case arg == "--force" || arg == "-f":
+			opts.force = true
+		case arg == "--skip-audit":
+			opts.skipAudit = true
+		case arg == "--audit-threshold" || arg == "--threshold" || arg == "-T":
+			i++
+			if i >= len(args) {
+				return nil, false, fmt.Errorf("%s requires a value", arg)
+			}
+			threshold, err := normalizeInstallAuditThreshold(args[i])
+			if err != nil {
+				return nil, false, err
+			}
+			opts.threshold = threshold
 		case arg == "--json":
 			opts.jsonOutput = true
 		case arg == "--group" || arg == "-G":
@@ -405,6 +550,18 @@ func collectTrackedAgentResults(results []check.AgentCheckResult) []check.AgentC
 		}
 	}
 	return tracked
+}
+
+func mergeTrackedAgentResults(results, tracked []check.AgentCheckResult) {
+	indexByName := make(map[string]int, len(results))
+	for i, r := range results {
+		indexByName[r.Name] = i
+	}
+	for _, r := range tracked {
+		if idx, ok := indexByName[r.Name]; ok {
+			results[idx] = r
+		}
+	}
 }
 
 func filterAgentCheckResults(results []check.AgentCheckResult, names []string) []check.AgentCheckResult {
@@ -496,22 +653,49 @@ func logUpdateAgentOp(cfgPath string, total, updated, failed int, dryRun bool, s
 	oplog.WriteWithLimit(cfgPath, oplog.OpsFile, e, logMaxEntries()) //nolint:errcheck
 }
 
-func updateAgentsOutputJSON(updatable []check.AgentCheckResult, dryRun bool, start time.Time, err error) error {
-	type agentUpdateJSON struct {
-		Name   string `json:"name"`
-		Source string `json:"source,omitempty"`
-		Status string `json:"status"`
+func agentUpdateItemsFromCheckResults(results []check.AgentCheckResult) []agentUpdateItem {
+	items := make([]agentUpdateItem, 0, len(results))
+	for _, r := range results {
+		item := agentUpdateItem{
+			Name:    r.Name,
+			Source:  r.Source,
+			Status:  r.Status,
+			Message: r.Message,
+		}
+		if r.Status == "error" {
+			item.Error = r.Message
+		}
+		items = append(items, item)
 	}
-	var items []agentUpdateJSON
-	for _, r := range updatable {
-		items = append(items, agentUpdateJSON{
-			Name:   r.Name,
-			Source: r.Source,
-			Status: r.Status,
-		})
+	return items
+}
+
+func mergeAgentUpdateItems(base, updates []agentUpdateItem) []agentUpdateItem {
+	if len(updates) == 0 {
+		return base
 	}
+
+	merged := append([]agentUpdateItem(nil), base...)
+	indexByName := make(map[string]int, len(merged))
+	for i, item := range merged {
+		indexByName[item.Name] = i
+	}
+
+	for _, item := range updates {
+		if idx, ok := indexByName[item.Name]; ok {
+			merged[idx] = item
+			continue
+		}
+		indexByName[item.Name] = len(merged)
+		merged = append(merged, item)
+	}
+
+	return merged
+}
+
+func updateAgentsOutputJSON(items []agentUpdateItem, dryRun bool, start time.Time, err error) error {
 	output := struct {
-		Agents   []agentUpdateJSON `json:"agents"`
+		Agents   []agentUpdateItem `json:"agents"`
 		DryRun   bool              `json:"dry_run"`
 		Duration string            `json:"duration"`
 	}{
@@ -524,26 +708,64 @@ func updateAgentsOutputJSON(updatable []check.AgentCheckResult, dryRun bool, sta
 
 // cmdUpdateAgentsProject handles "skillshare update -p agents [name|--all]".
 func cmdUpdateAgentsProject(args []string, projectRoot string, start time.Time) error {
-	agentsDir := filepath.Join(projectRoot, ".skillshare", "agents")
-	if _, err := os.Stat(agentsDir); err != nil {
-		if os.IsNotExist(err) {
-			ui.Info("No project agents directory (%s)", agentsDir)
-			return nil
-		}
-		return fmt.Errorf("cannot access project agents: %w", err)
-	}
-
+	jsonRequested := hasFlag(args, "--json")
 	opts, showHelp, parseErr := parseUpdateAgentArgs(args)
 	if showHelp {
 		printUpdateHelp()
 		return nil
 	}
 	if parseErr != nil {
+		if jsonRequested {
+			return writeJSONError(parseErr)
+		}
 		return parseErr
+	}
+	jsonUI := newJSONUISuppressor(opts.jsonOutput)
+	defer jsonUI.Flush()
+
+	jsonWriteResult := func(items []agentUpdateItem, cmdErr error) error {
+		jsonUI.Flush()
+		return updateAgentsOutputJSON(items, opts.dryRun, start, cmdErr)
+	}
+	failJSON := func(err error) error {
+		if opts.jsonOutput {
+			jsonUI.Flush()
+			return writeJSONError(err)
+		}
+		return err
+	}
+
+	if !projectConfigExists(projectRoot) {
+		if err := performProjectInit(projectRoot, projectInitOptions{}); err != nil {
+			return failJSON(err)
+		}
+	}
+
+	runtime, err := loadProjectRuntime(projectRoot)
+	if err != nil {
+		return failJSON(err)
+	}
+	if opts.threshold == "" {
+		opts.threshold = runtime.config.Audit.BlockThreshold
+	}
+
+	agentsDir := runtime.agentsSourcePath
+	if _, err := os.Stat(agentsDir); err != nil {
+		if os.IsNotExist(err) {
+			if opts.jsonOutput {
+				return jsonWriteResult(nil, nil)
+			}
+			ui.Info("No project agents directory (%s)", agentsDir)
+			return nil
+		}
+		return failJSON(fmt.Errorf("cannot access project agents: %w", err))
 	}
 
 	results := check.CheckAgents(agentsDir)
 	if len(results) == 0 {
+		if opts.jsonOutput {
+			return jsonWriteResult(nil, nil)
+		}
 		ui.Info("No project agents found")
 		return nil
 	}
@@ -551,7 +773,7 @@ func cmdUpdateAgentsProject(args []string, projectRoot string, start time.Time) 
 	if len(opts.names) > 0 {
 		results = filterAgentCheckResults(results, opts.names)
 		if len(results) == 0 {
-			return fmt.Errorf("no matching agents found: %s", strings.Join(opts.names, ", "))
+			return failJSON(fmt.Errorf("no matching agents found: %s", strings.Join(opts.names, ", ")))
 		}
 	}
 
@@ -559,22 +781,26 @@ func cmdUpdateAgentsProject(args []string, projectRoot string, start time.Time) 
 		var err error
 		results, err = filterAgentResultsByGroups(results, opts.groups, agentsDir)
 		if err != nil {
-			return err
+			return failJSON(err)
 		}
 		if len(results) == 0 {
-			return fmt.Errorf("no agents found in group(s): %s", strings.Join(opts.groups, ", "))
+			return failJSON(fmt.Errorf("no agents found in group(s): %s", strings.Join(opts.groups, ", ")))
 		}
 	}
 
 	tracked := collectTrackedAgentResults(results)
 
 	if len(tracked) == 0 {
+		if opts.jsonOutput {
+			return jsonWriteResult(agentUpdateItemsFromCheckResults(results), nil)
+		}
 		ui.Info("No tracked project agents to update (all are local)")
 		return nil
 	}
 
-	sp := ui.StartSpinner(fmt.Sprintf("Checking %d agent(s)...", len(tracked)))
+	sp := ui.StartSpinner(fmt.Sprintf("Checking %d agent(s) for updates...", len(tracked)))
 	check.EnrichAgentResultsWithRemote(tracked, func() { sp.Success("Check complete") })
+	mergeTrackedAgentResults(results, tracked)
 
 	var updatable []check.AgentCheckResult
 	for _, r := range tracked {
@@ -582,8 +808,12 @@ func cmdUpdateAgentsProject(args []string, projectRoot string, start time.Time) 
 			updatable = append(updatable, r)
 		}
 	}
+	finalItems := agentUpdateItemsFromCheckResults(results)
 
 	if len(updatable) == 0 {
+		if opts.jsonOutput {
+			return jsonWriteResult(finalItems, nil)
+		}
 		ui.Success("All project agents are up to date")
 		return nil
 	}
@@ -594,12 +824,24 @@ func cmdUpdateAgentsProject(args []string, projectRoot string, start time.Time) 
 		for _, r := range updatable {
 			ui.Info("  %s: update available from %s", r.Name, r.Source)
 		}
+		if opts.jsonOutput {
+			return jsonWriteResult(finalItems, nil)
+		}
 		return nil
 	}
 
-	updated, failed := batchUpdateAgents(agentsDir, updatable, true)
+	updatedItems, updated, failed := batchUpdateAgents(agentsDir, updatable, opts, projectRoot, !opts.jsonOutput)
+	finalItems = mergeAgentUpdateItems(finalItems, updatedItems)
 
 	logUpdateAgentOp(config.ProjectConfigPath(projectRoot), len(updatable), updated, failed, opts.dryRun, start)
+
+	if opts.jsonOutput {
+		var cmdErr error
+		if failed > 0 {
+			cmdErr = fmt.Errorf("%d agent(s) failed to update", failed)
+		}
+		return jsonWriteResult(finalItems, cmdErr)
+	}
 
 	if failed > 0 {
 		return fmt.Errorf("%d agent(s) failed to update", failed)
