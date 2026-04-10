@@ -58,7 +58,7 @@ done
 if [[ "$ONLINE" == "true" ]]; then
   PROFILE="online"
   SERVICE="sandbox-online"
-  DEFAULT_ONLINE_CMD="mkdir -p bin && go build -o bin/skillshare ./cmd/skillshare && SKILLSHARE_TEST_BINARY=/workspace/bin/skillshare go test -v -tags online ./tests/integration/... -timeout 300s"
+  DEFAULT_ONLINE_CMD="mkdir -p bin && go build -o bin/skillshare ./cmd/skillshare && SKILLSHARE_TEST_BINARY=/workspace/bin/skillshare go test -v -tags online ./tests/integration/... -timeout 600s"
 else
   PROFILE="offline"
   SERVICE="sandbox-offline"
