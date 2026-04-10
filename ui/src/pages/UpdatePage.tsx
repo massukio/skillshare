@@ -3,7 +3,7 @@ import { useQuery, useQueryClient } from '@tanstack/react-query';
 import {
   ArrowUpCircle, RefreshCw, Search, Check, Zap, Trash2,
   Circle, CheckCircle, XCircle, MinusCircle, ShieldAlert, Loader2,
-  LayoutGrid, Users, Globe,
+  LayoutGrid, Users, Globe, Puzzle, Bot,
 } from 'lucide-react';
 import { Virtuoso } from 'react-virtuoso';
 import Card from '../components/Card';
@@ -40,6 +40,8 @@ interface CheckItemStatus {
 }
 
 type TypeFilter = 'all' | 'tracked' | 'github';
+
+type ResourceTab = 'skills' | 'agents';
 
 interface UpdatableItem {
   name: string;
@@ -78,8 +80,11 @@ export default function UpdatePage() {
   });
   const allSkills = skillsData?.resources ?? [];
 
-  // Derive updatable items: tracked repos + GitHub-installed skills
-  const updatableItems: UpdatableItem[] = useMemo(
+  // Tab state (skills vs agents)
+  const [activeTab, setActiveTab] = useState<ResourceTab>('skills');
+
+  // All updatable items (both skills and agents): tracked repos + GitHub-installed
+  const allUpdatableItems: UpdatableItem[] = useMemo(
     () =>
       allSkills
         .filter((s) => s.isInRepo || s.source)
@@ -92,9 +97,27 @@ export default function UpdatePage() {
           type: s.type,
           relPath: s.relPath,
           installedAt: s.installedAt,
-        }))
-        .sort((a, b) => a.name.localeCompare(b.name)),
+        })),
     [allSkills],
+  );
+
+  // Tab counts
+  const skillTabCount = useMemo(
+    () => allUpdatableItems.filter((i) => i.kind !== 'agent').length,
+    [allUpdatableItems],
+  );
+  const agentTabCount = useMemo(
+    () => allUpdatableItems.filter((i) => i.kind === 'agent').length,
+    [allUpdatableItems],
+  );
+
+  // Tab-scoped items
+  const updatableItems: UpdatableItem[] = useMemo(
+    () =>
+      activeTab === 'agents'
+        ? allUpdatableItems.filter((i) => i.kind === 'agent')
+        : allUpdatableItems.filter((i) => i.kind !== 'agent'),
+    [allUpdatableItems, activeTab],
   );
 
   // Check state
@@ -210,6 +233,15 @@ export default function UpdatePage() {
     runCheck(new Set(selected));
   }, [runCheck, selected]);
 
+  /* ── Tab switching ───────────────────────────────── */
+
+  const changeTab = useCallback((tab: ResourceTab) => {
+    setActiveTab(tab);
+    setSelected(new Set());
+    setSearch('');
+    setTypeFilter('all');
+  }, []);
+
   /* ── Filtering ───────────────────────────────────── */
 
   const filterCounts = useMemo(() => {
@@ -232,7 +264,13 @@ export default function UpdatePage() {
     } else if (typeFilter === 'github') {
       list = list.filter((s) => (s.type === 'github' || s.type === 'github-subdir') && !s.isInRepo);
     }
-    return list;
+    // Sort by group (top-level directory of relPath) then by name
+    return [...list].sort((a, b) => {
+      const groupA = a.relPath.split('/')[0];
+      const groupB = b.relPath.split('/')[0];
+      if (groupA !== groupB) return groupA.localeCompare(groupB);
+      return a.name.localeCompare(b.name);
+    });
   }, [updatableItems, deferredSearch, typeFilter]);
 
   /* ── Selection ───────────────────────────────────── */
@@ -497,7 +535,7 @@ export default function UpdatePage() {
           />
         )}
 
-        {updatableItems.length === 0 ? (
+        {allUpdatableItems.length === 0 ? (
           <EmptyState
             icon={Check}
             title="No updatable skills"
@@ -505,6 +543,43 @@ export default function UpdatePage() {
           />
         ) : (
           <>
+            {/* Resource type tabs (Skills / Agents) */}
+            <nav
+              className="ss-resource-tabs flex items-center gap-6 border-b-2 border-muted -mx-4 px-4 md:-mx-8 md:px-8"
+              role="tablist"
+            >
+              {([
+                { key: 'skills' as ResourceTab, icon: <Puzzle size={16} strokeWidth={2.5} />, label: 'Skills', count: skillTabCount },
+                { key: 'agents' as ResourceTab, icon: <Bot size={16} strokeWidth={2.5} />, label: 'Agents', count: agentTabCount },
+              ]).map((tab) => (
+                <button
+                  key={tab.key}
+                  type="button"
+                  role="tab"
+                  aria-selected={activeTab === tab.key}
+                  onClick={() => changeTab(tab.key)}
+                  className={`
+                    ss-resource-tab
+                    inline-flex items-center gap-1.5 px-1 pb-2.5 text-sm font-semibold cursor-pointer
+                    transition-all duration-150 border-b-[3px] -mb-[2px]
+                    ${activeTab === tab.key
+                      ? 'border-pencil text-pencil'
+                      : 'border-transparent text-pencil-light hover:text-pencil hover:border-muted-dark'
+                    }
+                  `}
+                >
+                  {tab.icon}
+                  {tab.label}
+                  <span className={`
+                    text-[11px] font-medium px-1.5 py-0.5 rounded-[var(--radius-sm)]
+                    ${activeTab === tab.key ? 'bg-pencil/10 text-pencil' : 'bg-muted text-pencil-light'}
+                  `}>
+                    {tab.count}
+                  </span>
+                </button>
+              ))}
+            </nav>
+
             {/* Sticky toolbar */}
             <div className="sticky top-0 z-20 bg-paper -mx-4 px-4 md:-mx-8 md:px-8 py-2 mb-1 space-y-2">
               {/* Search */}
@@ -515,7 +590,7 @@ export default function UpdatePage() {
                   className="absolute left-4 top-1/2 -translate-y-1/2 text-muted-dark pointer-events-none"
                 />
                 <Input
-                  placeholder="Filter skills..."
+                  placeholder={`Filter ${activeTab === 'agents' ? 'agents' : 'skills'}...`}
                   value={search}
                   onChange={(e) => setSearch(e.target.value)}
                   className="!pl-11"
@@ -551,7 +626,11 @@ export default function UpdatePage() {
             {/* Virtuoso list */}
             {filtered.length === 0 ? (
               <div className="py-12 text-center">
-                <p className="text-pencil-light text-sm">No skills match your filter.</p>
+                <p className="text-pencil-light text-sm">
+                  {updatableItems.length === 0
+                    ? `No updatable ${activeTab === 'agents' ? 'agents' : 'skills'}.`
+                    : `No ${activeTab === 'agents' ? 'agents' : 'skills'} match your filter.`}
+                </p>
               </div>
             ) : (
               <div
