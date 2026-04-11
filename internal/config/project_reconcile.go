@@ -3,158 +3,43 @@ package config
 import (
 	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 
 	"skillshare/internal/install"
-	"skillshare/internal/utils"
 )
 
 // ReconcileProjectSkills scans the project source directory recursively for
 // remotely-installed skills (those with install metadata or tracked repos)
-// and ensures they are listed in ProjectConfig.Skills[].
+// and ensures they are present in the MetadataStore.
 // It also updates .skillshare/.gitignore for each tracked skill.
-func ReconcileProjectSkills(projectRoot string, projectCfg *ProjectConfig, reg *Registry, sourcePath string) error {
+func ReconcileProjectSkills(projectRoot string, projectCfg *ProjectConfig, store *install.MetadataStore, sourcePath string) error {
 	if _, err := os.Stat(sourcePath); os.IsNotExist(err) {
-		return nil // no skills dir yet
-	}
-
-	changed := false
-	index := map[string]int{}
-	for i, skill := range reg.Skills {
-		index[skill.FullName()] = i
-	}
-
-	// Migrate legacy entries: name "frontend/pdf" → group "frontend", name "pdf"
-	for i := range reg.Skills {
-		s := &reg.Skills[i]
-		if s.Group == "" && strings.Contains(s.Name, "/") {
-			group, bare := s.EffectiveParts()
-			s.Group = group
-			s.Name = bare
-			changed = true
-		}
-	}
-
-	// Collect gitignore entries during walk, then batch-update once at the end.
-	var gitignoreEntries []string
-
-	walkRoot := utils.ResolveSymlink(sourcePath)
-	live := map[string]bool{} // tracks skills actually found on disk
-	err := filepath.WalkDir(walkRoot, func(path string, d os.DirEntry, err error) error {
-		if err != nil {
-			return nil
-		}
-		if path == walkRoot {
-			return nil
-		}
-		if !d.IsDir() {
-			return nil
-		}
-		// Skip hidden directories
-		if utils.IsHidden(d.Name()) {
-			return filepath.SkipDir
-		}
-		// Skip .git directories
-		if d.Name() == ".git" {
-			return filepath.SkipDir
-		}
-
-		relPath, relErr := filepath.Rel(walkRoot, path)
-		if relErr != nil {
-			return nil
-		}
-
-		// Determine source and tracked status
-		var source string
-		tracked := isGitRepo(path)
-
-		meta, metaErr := install.ReadMeta(path)
-		if metaErr == nil && meta != nil && meta.Source != "" {
-			source = meta.Source
-		} else if tracked {
-			// Tracked repos have no meta file; derive source from git remote
-			source = gitRemoteOrigin(path)
-		}
-		if source == "" {
-			// Not an installed skill — continue walking deeper
-			return nil
-		}
-
-		fullPath := filepath.ToSlash(relPath)
-		live[fullPath] = true
-
-		// Determine branch: from metadata (regular skills) or git (tracked repos)
-		var branch string
-		if meta != nil {
-			branch = meta.Branch
-		} else if tracked {
-			branch = gitCurrentBranch(path)
-		}
-
-		if existingIdx, ok := index[fullPath]; ok {
-			if reg.Skills[existingIdx].Source != source {
-				reg.Skills[existingIdx].Source = source
-				changed = true
-			}
-			if reg.Skills[existingIdx].Tracked != tracked {
-				reg.Skills[existingIdx].Tracked = tracked
-				changed = true
-			}
-			if reg.Skills[existingIdx].Branch != branch {
-				reg.Skills[existingIdx].Branch = branch
-				changed = true
-			}
-		} else {
-			entry := SkillEntry{
-				Source:  source,
-				Tracked: tracked,
-				Branch:  branch,
-			}
-			if idx := strings.LastIndex(fullPath, "/"); idx >= 0 {
-				entry.Group = fullPath[:idx]
-				entry.Name = fullPath[idx+1:]
-			} else {
-				entry.Name = fullPath
-			}
-			reg.Skills = append(reg.Skills, entry)
-			index[fullPath] = len(reg.Skills) - 1
-			changed = true
-		}
-
-		gitignoreEntries = append(gitignoreEntries, filepath.Join("skills", fullPath))
-
-		// If it's a tracked repo (has .git), don't recurse into it
-		if tracked {
-			return filepath.SkipDir
-		}
-
-		// If it has metadata, it's a leaf skill — don't recurse
-		if meta != nil && meta.Source != "" {
-			return filepath.SkipDir
-		}
-
 		return nil
-	})
+	}
+
+	var gitignoreEntries []string
+	onFound := func(fullPath string) {
+		gitignoreEntries = append(gitignoreEntries, filepath.Join("skills", fullPath))
+	}
+
+	result, err := reconcileSkillsWalk(sourcePath, store, onFound)
 	if err != nil {
 		return fmt.Errorf("failed to scan project skills: %w", err)
 	}
 
-	// Prune stale skill entries (not on disk). Preserve non-skill entries (agents).
-	var pruneChanged bool
-	reg.Skills, pruneChanged = PruneStaleSkills(reg.Skills, live, true)
-	changed = changed || pruneChanged
+	if pruneStaleEntries(store, result.live) {
+		result.changed = true
+	}
 
-	// Batch-update .gitignore once (reads/writes the file only once instead of per-skill).
 	if len(gitignoreEntries) > 0 {
 		if err := install.UpdateGitIgnoreBatch(filepath.Join(projectRoot, ".skillshare"), gitignoreEntries); err != nil {
 			return fmt.Errorf("failed to update .skillshare/.gitignore: %w", err)
 		}
 	}
 
-	if changed {
-		if err := reg.Save(filepath.Join(projectRoot, ".skillshare")); err != nil {
+	if result.changed {
+		if err := store.Save(sourcePath); err != nil {
 			return err
 		}
 	}
@@ -162,28 +47,54 @@ func ReconcileProjectSkills(projectRoot string, projectCfg *ProjectConfig, reg *
 	return nil
 }
 
-// isGitRepo checks if the given path is a git repository (has .git/ directory or file).
-func isGitRepo(path string) bool {
-	_, err := os.Stat(filepath.Join(path, ".git"))
-	return err == nil
-}
-
-// gitCurrentBranch returns the current branch name for a git repo, or "" on failure.
-func gitCurrentBranch(repoPath string) string {
-	cmd := exec.Command("git", "-C", repoPath, "rev-parse", "--abbrev-ref", "HEAD")
-	out, err := cmd.Output()
-	if err != nil {
-		return ""
+// ReconcileProjectAgents scans the project agents source directory for
+// installed agents and ensures they are present in the MetadataStore.
+// Also updates .skillshare/.gitignore for each agent.
+func ReconcileProjectAgents(projectRoot string, store *install.MetadataStore, agentsSourcePath string) error {
+	if _, err := os.Stat(agentsSourcePath); os.IsNotExist(err) {
+		return nil
 	}
-	return strings.TrimSpace(string(out))
-}
 
-// gitRemoteOrigin returns the "origin" remote URL for a git repo, or "" on failure.
-func gitRemoteOrigin(repoPath string) string {
-	cmd := exec.Command("git", "-C", repoPath, "remote", "get-url", "origin")
-	out, err := cmd.Output()
+	entries, err := os.ReadDir(agentsSourcePath)
 	if err != nil {
-		return ""
+		return nil
 	}
-	return strings.TrimSpace(string(out))
+
+	changed := false
+	var gitignoreEntries []string
+
+	for _, entry := range entries {
+		name := entry.Name()
+		if entry.IsDir() || !strings.HasSuffix(strings.ToLower(name), ".md") {
+			continue
+		}
+
+		agentName := strings.TrimSuffix(name, ".md")
+
+		existing := store.Get(agentName)
+		if existing == nil || existing.Source == "" {
+			continue
+		}
+
+		if existing.Kind != "agent" {
+			existing.Kind = "agent"
+			changed = true
+		}
+
+		gitignoreEntries = append(gitignoreEntries, filepath.Join("agents", name))
+	}
+
+	if len(gitignoreEntries) > 0 {
+		if err := install.UpdateGitIgnoreBatch(filepath.Join(projectRoot, ".skillshare"), gitignoreEntries); err != nil {
+			return fmt.Errorf("failed to update .skillshare/.gitignore for agents: %w", err)
+		}
+	}
+
+	if changed {
+		if err := store.Save(agentsSourcePath); err != nil {
+			return err
+		}
+	}
+
+	return nil
 }

@@ -13,6 +13,9 @@ import (
 	"skillshare/internal/ui"
 )
 
+// extrasAgentsName is the extras entry name that may overlap with the agents sync system.
+const extrasAgentsName = "agents"
+
 type syncExtrasJSONOutput struct {
 	Extras   []syncExtrasJSONEntry `json:"extras"`
 	Duration string                `json:"duration"`
@@ -24,13 +27,14 @@ type syncExtrasJSONEntry struct {
 }
 
 type syncExtrasJSONTarget struct {
-	Path     string   `json:"path"`
-	Mode     string   `json:"mode"`
-	Synced   int      `json:"synced"`
-	Skipped  int      `json:"skipped"`
-	Pruned   int      `json:"pruned"`
-	Error    string   `json:"error,omitempty"`
-	Warnings []string `json:"warnings,omitempty"`
+	Path      string   `json:"path"`
+	Mode      string   `json:"mode"`
+	Synced    int      `json:"synced"`
+	Skipped   int      `json:"skipped"`
+	Pruned    int      `json:"pruned"`
+	Error     string   `json:"error,omitempty"`
+	Warnings  []string `json:"warnings,omitempty"`
+	SkippedBy string   `json:"skipped_by,omitempty"`
 }
 
 func cmdSyncExtras(args []string) error {
@@ -99,11 +103,20 @@ func cmdSyncExtrasGlobal(dryRun, force, jsonOutput bool, start time.Time) error 
 		ui.Warning("Dry run mode - no changes will be made")
 	}
 
-	var totalSynced, totalSkipped, totalPruned, totalErrors int
+	// Detect overlap between extras "agents" and the agents sync system
+	var agentTargetPaths map[string]bool
+	for _, extra := range cfg.Extras {
+		if extra.Name == extrasAgentsName {
+			agentTargetPaths = collectAgentTargetPathsGlobal(cfg)
+			break
+		}
+	}
+
+	var totalSynced, totalSkipped, totalPruned, totalErrors, totalTargets int
 	var jsonEntries []syncExtrasJSONEntry
 
 	if !jsonOutput {
-		ui.Header(ui.WithModeLabel("Sync Extras"))
+		ui.Header(ui.WithModeLabel("Syncing extras"))
 	}
 
 	for _, extra := range cfg.Extras {
@@ -128,11 +141,24 @@ func cmdSyncExtrasGlobal(dryRun, force, jsonOutput bool, start time.Time) error 
 		jsonEntry := syncExtrasJSONEntry{Name: extra.Name}
 
 		for _, target := range extra.Targets {
+			totalTargets++
 			mode := target.Mode
 			if mode == "" {
 				mode = "merge"
 			}
 			targetPath := config.ExpandPath(target.Path)
+
+			// Skip extras "agents" targets that overlap with the agents sync system
+			if extra.Name == extrasAgentsName && isExtrasTargetOverlappingAgents(targetPath, agentTargetPaths) {
+				if !jsonOutput {
+					ui.Warning("Skipping extras %q target %s — already managed by agents sync", extra.Name, shortenPath(targetPath))
+				}
+				jsonEntry.Targets = append(jsonEntry.Targets, syncExtrasJSONTarget{
+					Path: target.Path, Mode: mode, SkippedBy: extrasAgentsName,
+				})
+				continue
+			}
+
 			result, syncErr := sync.SyncExtra(extraSource, targetPath, mode, dryRun, force, target.Flatten, "")
 			shortTarget := shortenPath(targetPath)
 
@@ -143,7 +169,7 @@ func cmdSyncExtrasGlobal(dryRun, force, jsonOutput bool, start time.Time) error 
 
 			if syncErr != nil {
 				if !jsonOutput {
-					ui.Warning("  %s: %v", shortTarget, syncErr)
+					ui.Warning("%s: %v", shortTarget, syncErr)
 				}
 				jsonTarget.Error = syncErr.Error()
 				jsonEntry.Targets = append(jsonEntry.Targets, jsonTarget)
@@ -173,11 +199,11 @@ func cmdSyncExtrasGlobal(dryRun, force, jsonOutput bool, start time.Time) error 
 					if result.Pruned > 0 {
 						parts = append(parts, fmt.Sprintf("%d pruned", result.Pruned))
 					}
-					ui.Success("  %s  %s (%s)", shortTarget, strings.Join(parts, ", "), mode)
+					ui.Success("%s  %s (%s)", shortTarget, strings.Join(parts, ", "), mode)
 				} else if result.Skipped > 0 {
-					ui.Warning("  %s  %d files skipped (use --force to override)", shortTarget, result.Skipped)
+					ui.Warning("%s  %d files skipped (use --force to override)", shortTarget, result.Skipped)
 				} else {
-					ui.Success("  %s  up to date (%s)", shortTarget, mode)
+					ui.Success("%s  up to date (%s)", shortTarget, mode)
 				}
 
 				for _, e := range result.Errors {
@@ -217,6 +243,14 @@ func cmdSyncExtrasGlobal(dryRun, force, jsonOutput bool, start time.Time) error 
 		return writeJSON(&output)
 	}
 
+	ui.ExtrasSyncSummary(ui.ExtrasSyncStats{
+		Targets:  totalTargets,
+		Synced:   totalSynced,
+		Skipped:  totalSkipped,
+		Pruned:   totalPruned,
+		Duration: time.Since(start),
+	})
+
 	if totalErrors > 0 {
 		return fmt.Errorf("%d extras sync error(s)", totalErrors)
 	}
@@ -245,11 +279,20 @@ func cmdSyncExtrasProject(cwd string, dryRun, force, jsonOutput bool, start time
 		ui.Warning("Dry run mode - no changes will be made")
 	}
 
-	var totalSynced, totalSkipped, totalPruned, totalErrors int
+	// Detect overlap between extras "agents" and the agents sync system
+	var agentTargetPaths map[string]bool
+	for _, extra := range projCfg.Extras {
+		if extra.Name == extrasAgentsName {
+			agentTargetPaths = collectAgentTargetPathsProject(cwd)
+			break
+		}
+	}
+
+	var totalSynced, totalSkipped, totalPruned, totalErrors, totalTargets int
 	var jsonEntries []syncExtrasJSONEntry
 
 	if !jsonOutput {
-		ui.Header(ui.WithModeLabel("Sync Extras"))
+		ui.Header(ui.WithModeLabel("Syncing extras"))
 	}
 
 	for _, extra := range projCfg.Extras {
@@ -269,15 +312,24 @@ func cmdSyncExtrasProject(cwd string, dryRun, force, jsonOutput bool, start time
 		jsonEntry := syncExtrasJSONEntry{Name: extra.Name}
 
 		for _, target := range extra.Targets {
+			totalTargets++
 			mode := target.Mode
 			if mode == "" {
 				mode = "merge"
 			}
 
 			// Expand ~ and resolve relative paths against project root
-			targetPath := config.ExpandPath(target.Path)
-			if !filepath.IsAbs(targetPath) {
-				targetPath = filepath.Join(cwd, targetPath)
+			targetPath := resolveProjectPath(cwd, target.Path)
+
+			// Skip extras "agents" targets that overlap with the agents sync system
+			if extra.Name == extrasAgentsName && isExtrasTargetOverlappingAgents(targetPath, agentTargetPaths) {
+				if !jsonOutput {
+					ui.Warning("Skipping extras %q target %s — already managed by agents sync", extra.Name, shortenPath(targetPath))
+				}
+				jsonEntry.Targets = append(jsonEntry.Targets, syncExtrasJSONTarget{
+					Path: target.Path, Mode: mode, SkippedBy: extrasAgentsName,
+				})
+				continue
 			}
 
 			result, syncErr := sync.SyncExtra(extraSource, targetPath, mode, dryRun, force, target.Flatten, cwd)
@@ -290,7 +342,7 @@ func cmdSyncExtrasProject(cwd string, dryRun, force, jsonOutput bool, start time
 
 			if syncErr != nil {
 				if !jsonOutput {
-					ui.Warning("  %s: %v", shortTarget, syncErr)
+					ui.Warning("%s: %v", shortTarget, syncErr)
 				}
 				jsonTarget.Error = syncErr.Error()
 				jsonEntry.Targets = append(jsonEntry.Targets, jsonTarget)
@@ -319,11 +371,11 @@ func cmdSyncExtrasProject(cwd string, dryRun, force, jsonOutput bool, start time
 					if result.Pruned > 0 {
 						parts = append(parts, fmt.Sprintf("%d pruned", result.Pruned))
 					}
-					ui.Success("  %s  %s (%s)", shortTarget, strings.Join(parts, ", "), mode)
+					ui.Success("%s  %s (%s)", shortTarget, strings.Join(parts, ", "), mode)
 				} else if result.Skipped > 0 {
-					ui.Warning("  %s  %d files skipped (use --force to override)", shortTarget, result.Skipped)
+					ui.Warning("%s  %d files skipped (use --force to override)", shortTarget, result.Skipped)
 				} else {
-					ui.Success("  %s  up to date (%s)", shortTarget, mode)
+					ui.Success("%s  up to date (%s)", shortTarget, mode)
 				}
 
 				for _, e := range result.Errors {
@@ -363,6 +415,14 @@ func cmdSyncExtrasProject(cwd string, dryRun, force, jsonOutput bool, start time
 		return writeJSON(&output)
 	}
 
+	ui.ExtrasSyncSummary(ui.ExtrasSyncStats{
+		Targets:  totalTargets,
+		Synced:   totalSynced,
+		Skipped:  totalSkipped,
+		Pruned:   totalPruned,
+		Duration: time.Since(start),
+	})
+
 	if totalErrors > 0 {
 		return fmt.Errorf("%d extras sync error(s)", totalErrors)
 	}
@@ -383,7 +443,8 @@ func syncVerb(mode string) string {
 
 // runExtrasSync runs extras sync and returns JSON entries without printing.
 // Used by sync --all --json to merge extras into the skills JSON output.
-func runExtrasSyncEntries(extras []config.ExtraConfig, sourceFunc func(config.ExtraConfig) string, dryRun, force bool, projectRoot string) []syncExtrasJSONEntry {
+// agentTargetPaths is used to skip extras "agents" targets that overlap with the agents sync system.
+func runExtrasSyncEntries(extras []config.ExtraConfig, sourceFunc func(config.ExtraConfig) string, dryRun, force bool, projectRoot string, agentTargetPaths map[string]bool) []syncExtrasJSONEntry {
 	entries := make([]syncExtrasJSONEntry, 0, len(extras))
 	for _, extra := range extras {
 		extraSource := sourceFunc(extra)
@@ -401,6 +462,16 @@ func runExtrasSyncEntries(extras []config.ExtraConfig, sourceFunc func(config.Ex
 				mode = "merge"
 			}
 			targetPath := config.ExpandPath(target.Path)
+			if projectRoot != "" {
+				targetPath = resolveProjectPath(projectRoot, target.Path)
+			}
+
+			if extra.Name == extrasAgentsName && isExtrasTargetOverlappingAgents(targetPath, agentTargetPaths) {
+				entry.Targets = append(entry.Targets, syncExtrasJSONTarget{
+					Path: targetPath, Mode: mode, SkippedBy: extrasAgentsName,
+				})
+				continue
+			}
 
 			result, syncErr := sync.SyncExtra(extraSource, targetPath, mode, dryRun, force, target.Flatten, projectRoot)
 			jt := syncExtrasJSONTarget{Path: targetPath, Mode: mode}
@@ -421,6 +492,15 @@ func runExtrasSyncEntries(extras []config.ExtraConfig, sourceFunc func(config.Ex
 		entries = append(entries, entry)
 	}
 	return entries
+}
+
+// isExtrasTargetOverlappingAgents checks whether an extras target path overlaps
+// with any active agent target path.
+func isExtrasTargetOverlappingAgents(targetPath string, agentPaths map[string]bool) bool {
+	if len(agentPaths) == 0 {
+		return false
+	}
+	return agentPaths[filepath.Clean(targetPath)]
 }
 
 // cachedHome caches the home directory for shortenPath.

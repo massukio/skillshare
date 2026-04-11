@@ -12,6 +12,7 @@ skillshare update a b c              # Update multiple at once
 skillshare update --group frontend   # Update all skills in a group
 skillshare update team-skills        # Update tracked repo
 skillshare update --all              # Update everything
+skillshare update agents --all       # Update all tracked/updatable agents
 ```
 
 ## When to Use
@@ -55,19 +56,21 @@ flowchart TD
 
 | Flag | Description |
 |------|-------------|
-| `--all, -a` | Update all tracked repos and skills with metadata |
-| `--group, -G <name>` | Update all updatable skills in a group (repeatable) |
+| `--all, -a` | Update all tracked repos/skills, or all agents when used as `update agents --all` |
+| `--group, -G <name>` | Update all updatable skills in a group, or all agents in an agent subdirectory |
 | `--force, -f` | Discard local changes and force update |
 | `--dry-run, -n` | Preview without making changes |
 | `--skip-audit` | Skip the post-update security audit gate |
 | `--audit-threshold <t>`, `--threshold <t>`, `-T <t>` | Override update audit block threshold (`critical|high|medium|low|info`; shorthand: `c|h|m|l|i`, plus `crit`, `med`) |
-| `--diff` | Show file-level change summary after update |
+| `--diff` | Show file-level change summary after skill/repo update |
 | `--audit-verbose` | Show detailed per-skill audit findings in batch mode |
 | `--prune` | Remove stale skills (deleted upstream) instead of warning |
 | `--project, -p` | Use project-level config in current directory |
 | `--global, -g` | Use global config (`~/.config/skillshare`) |
 | `--json` | Output as JSON |
 | `--help, -h` | Show help |
+
+`update agents` supports: `--all`, `--group`, `--force`, `--dry-run`, `--skip-audit`, `--audit-threshold` / `--threshold` / `-T`, `--json`, plus `--project` / `--global`. It does **not** support `--diff`, `--audit-verbose`, or `--prune`.
 
 ## JSON Output
 
@@ -93,6 +96,41 @@ skillshare update --all --json
 ```
 
 Possible `status` values: `updated`, `skipped`, `failed`, `security_blocked`. When an item fails, the `error` field is included.
+
+### Agent JSON Output
+
+```bash
+skillshare update agents --all --json
+```
+
+```json
+{
+  "agents": [
+    {"name": "reviewer", "status": "updated", "source": "github.com/user/agents/reviewer.md"},
+    {"name": "team/tutor", "status": "up_to_date", "source": "github.com/user/agents/team/tutor.md"}
+  ],
+  "dry_run": false,
+  "duration": "1.234s"
+}
+```
+
+Possible agent `status` values include `updated`, `failed`, `skipped`, `up_to_date`, `update_available`, `dirty`, `drifted`, and `local`.
+
+## Updating Agents
+
+Use the `agents` kind selector when you only want to update standalone `.md` agents:
+
+```bash
+skillshare update agents reviewer
+skillshare update agents --group team
+skillshare update agents --all -T high
+skillshare update agents --all --json
+```
+
+Agent updates follow the same audit gate as skills:
+
+- tracked agent repos run `git pull`, then audit the updated repo
+- metadata-backed single-file agents reinstall from source, audit the staged `.md`, and only replace the local file on success
 
 ## Update Multiple
 
@@ -326,8 +364,8 @@ skillshare update --all -p --skip-audit  # Skip security audit gate
 | Type | Method | Detected by |
 |------|--------|-------------|
 | **Tracked repo** (`_repo`) | `git pull` | Has `.git/` directory |
-| **Remote skill** (with metadata) | Reinstall from source | Has `.skillshare-meta.json` |
-| **Local skill** | Skipped | No metadata |
+| **Remote skill** (with metadata) | Reinstall from source | Listed in `.metadata.json` |
+| **Local skill** | Skipped | Not listed in `.metadata.json` |
 
 The `_` prefix is optional — `skillshare update team-skills -p` auto-detects `_team-skills`.
 

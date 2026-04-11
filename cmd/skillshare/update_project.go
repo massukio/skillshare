@@ -59,11 +59,13 @@ func cmdUpdateProjectBatch(sourcePath string, opts *updateOptions, projectRoot s
 	seen := map[string]bool{}
 	var resolveWarnings []string
 
+	metaStore, _ := install.LoadMetadataWithMigration(sourcePath, "")
+
 	for _, name := range opts.names {
 		// Check group directory first (before repo/skill lookup,
 		// so "feature-radar" expands to all skills rather than
 		// matching a single nested "feature-radar/feature-radar").
-		if isGroupDir(name, sourcePath) {
+		if isGroupDir(name, sourcePath, metaStore) {
 			groupMatches, groupErr := resolveGroupUpdatable(name, sourcePath)
 			if groupErr != nil {
 				resolveWarnings = append(resolveWarnings, fmt.Sprintf("%s: %v", name, groupErr))
@@ -104,11 +106,11 @@ func cmdUpdateProjectBatch(sourcePath string, opts *updateOptions, projectRoot s
 		// Regular skill with metadata
 		skillPath := filepath.Join(sourcePath, name)
 		if info, err := os.Stat(skillPath); err == nil && info.IsDir() {
-			meta, metaErr := install.ReadMeta(skillPath)
-			if metaErr == nil && meta != nil && meta.Source != "" {
+			entry := metaStore.Get(name)
+			if entry != nil && entry.Source != "" {
 				if !seen[skillPath] {
 					seen[skillPath] = true
-					targets = append(targets, updateTarget{name: name, path: skillPath, isRepo: false, meta: meta})
+					targets = append(targets, updateTarget{name: name, path: skillPath, isRepo: false, meta: entry})
 				}
 				continue
 			}
@@ -187,6 +189,7 @@ func updateAllProjectSkills(uc *updateContext) (*updateResult, error) {
 
 	scanSpinner := ui.StartSpinner("Scanning skills...")
 	walkRoot := utils.ResolveSymlink(uc.sourcePath)
+	metaStore, _ := install.LoadMetadataWithMigration(uc.sourcePath, "")
 	err := filepath.Walk(walkRoot, func(path string, info os.FileInfo, err error) error {
 		if err != nil {
 			return nil
@@ -213,11 +216,10 @@ func updateAllProjectSkills(uc *updateContext) (*updateResult, error) {
 		// Regular skill with metadata
 		if !info.IsDir() && info.Name() == "SKILL.md" {
 			skillDir := filepath.Dir(path)
-			meta, metaErr := install.ReadMeta(skillDir)
-			if metaErr == nil && meta != nil && meta.Source != "" {
-				rel, _ := filepath.Rel(walkRoot, skillDir)
-				if rel != "." {
-					targets = append(targets, updateTarget{name: rel, path: skillDir, isRepo: false, meta: meta})
+			rel, _ := filepath.Rel(walkRoot, skillDir)
+			if rel != "." {
+				if entry := metaStore.Get(rel); entry != nil && entry.Source != "" {
+					targets = append(targets, updateTarget{name: rel, path: skillDir, isRepo: false, meta: entry})
 				}
 			}
 		}

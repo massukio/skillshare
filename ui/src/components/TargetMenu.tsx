@@ -276,6 +276,7 @@ function SubmenuTrigger({
 interface TargetMenuProps {
   currentTargets: string[] | null;  // null = All
   isUniform?: boolean;              // for folders
+  showTargets?: boolean;
   /** Menu item label. Defaults to "Available in...". */
   label?: string;
   /** Additional flat action items appended after the target submenu (e.g. Uninstall). */
@@ -289,6 +290,7 @@ interface TargetMenuProps {
 export default function TargetMenu({
   currentTargets,
   isUniform = true,
+  showTargets = true,
   label = 'Available in...',
   extraItems,
   onSelect,
@@ -308,29 +310,35 @@ export default function TargetMenu({
   const targets = (availableData?.targets ?? []).filter((t) => t.installed);
   const isAllSelected = isUniform && (!currentTargets || currentTargets.length === 0);
 
-  const setTargetItem: ContextMenuItem = {
-    key: 'set-target',
-    label,
-    icon: <Target size={13} strokeWidth={2.5} />,
-    items: [
-      {
-        key: '__all__',
-        label: 'All',
-        selected: isAllSelected,
-        onSelect: () => onSelect(null),
-      },
-      ...targets.map((t) => ({
-        key: t.name,
-        label: t.name,
-        selected: isUniform && currentTargets?.length === 1 && currentTargets[0] === t.name,
-        onSelect: () => onSelect(t.name),
-      })),
-    ],
-  };
+  const items: ContextMenuItem[] = [];
+  if (showTargets) {
+    items.push({
+      key: 'set-target',
+      label,
+      icon: <Target size={13} strokeWidth={2.5} />,
+      items: [
+        {
+          key: '__all__',
+          label: 'All',
+          selected: isAllSelected,
+          onSelect: () => onSelect(null),
+        },
+        ...targets.map((t) => ({
+          key: t.name,
+          label: t.name,
+          selected: isUniform && currentTargets?.length === 1 && currentTargets[0] === t.name,
+          onSelect: () => onSelect(t.name),
+        })),
+      ],
+    });
+  }
+  items.push(...(extraItems ?? []));
+
+  if (items.length === 0) return null;
 
   return (
     <SkillContextMenu
-      items={[setTargetItem, ...(extraItems ?? [])]}
+      items={items}
       anchorPoint={anchorPoint}
       open={open}
       onClose={onClose}

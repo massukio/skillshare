@@ -24,13 +24,19 @@ func (s *Server) handleAuditStream(w http.ResponseWriter, r *http.Request) {
 
 	// Snapshot config under RLock, then release before slow I/O.
 	s.mu.RLock()
-	source := s.cfg.Source
+	source, resultKind, isAgents := s.resolveAuditSource(r)
 	projectRoot := s.projectRoot
 	policy := s.auditPolicy()
 	s.mu.RUnlock()
 
-	// 1. Discover skills
-	skills, err := discoverAuditSkills(source)
+	// 1. Discover skills/agents
+	var skills []skillEntry
+	var err error
+	if isAgents {
+		skills, err = discoverAuditAgents(source)
+	} else {
+		skills, err = discoverAuditSkills(source)
+	}
 	if err != nil {
 		safeSend("error", map[string]string{"error": err.Error()})
 		return
@@ -64,12 +70,24 @@ func (s *Server) handleAuditStream(w http.ResponseWriter, r *http.Request) {
 	onDone := func() { scanned.Add(1) }
 
 	// 3. Parallel scan (blocks until all skills are scanned)
-	outputs := audit.ParallelScan(skillsToAuditInputs(skills), projectRoot, onDone, nil)
+	var inputs []audit.SkillInput
+	if isAgents {
+		inputs = make([]audit.SkillInput, len(skills))
+		for i, s := range skills {
+			inputs[i] = audit.SkillInput{Name: s.name, Path: s.path, IsFile: true}
+		}
+	} else {
+		inputs = skillsToAuditInputs(skills)
+	}
+	outputs := audit.ParallelScan(inputs, projectRoot, onDone, nil)
 	close(done) // signal ticker goroutine to stop
 	wg.Wait()   // wait for it to fully exit before writing to w
 
 	// 4. Process results
 	agg := processAuditResults(skills, outputs, policy)
+	for i := range agg.Results {
+		agg.Results[i].Kind = resultKind
+	}
 	s.writeAuditLog(agg.Status, start, agg.LogArgs, agg.Message)
 
 	// 5. Send final result (no concurrent writers at this point)

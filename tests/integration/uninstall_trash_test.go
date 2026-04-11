@@ -8,6 +8,7 @@ import (
 	"strings"
 	"testing"
 
+	"skillshare/internal/install"
 	"skillshare/internal/testutil"
 )
 
@@ -52,12 +53,11 @@ func TestUninstall_WithMeta_PrintsReinstallHint(t *testing.T) {
 
 	sb.CreateSkill("remote-skill", map[string]string{
 		"SKILL.md": "# Remote Skill",
-		".skillshare-meta.json": `{
-  "source": "github.com/user/skills/remote-skill",
-  "type": "github",
-  "installed_at": "2026-01-15T10:30:00Z"
-}`,
 	})
+	// Write metadata to centralized store
+	metaStore := `{"version":1,"entries":{"remote-skill":{"source":"github.com/user/skills/remote-skill","type":"github","installed_at":"2026-01-15T10:30:00Z"}}}`
+	os.WriteFile(filepath.Join(sb.SourcePath, install.MetadataFileName), []byte(metaStore), 0644)
+
 	sb.WriteConfig(`source: ` + sb.SourcePath + `
 targets: {}
 `)
@@ -94,12 +94,11 @@ func TestUninstall_DryRun_ShowsTrashPreview(t *testing.T) {
 
 	sb.CreateSkill("preview-skill", map[string]string{
 		"SKILL.md": "# Preview",
-		".skillshare-meta.json": `{
-  "source": "github.com/org/repo/preview-skill",
-  "type": "github",
-  "installed_at": "2026-01-15T10:30:00Z"
-}`,
 	})
+	// Write metadata to centralized store
+	metaStore := `{"version":1,"entries":{"preview-skill":{"source":"github.com/org/repo/preview-skill","type":"github","installed_at":"2026-01-15T10:30:00Z"}}}`
+	os.WriteFile(filepath.Join(sb.SourcePath, install.MetadataFileName), []byte(metaStore), 0644)
+
 	sb.WriteConfig(`source: ` + sb.SourcePath + `
 targets: {}
 `)

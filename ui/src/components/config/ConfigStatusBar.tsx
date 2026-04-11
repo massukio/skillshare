@@ -9,7 +9,7 @@ interface ConfigStatusBarProps {
   collapsed: boolean;
   onToggleCollapse: () => void;
   onErrorsClick: () => void;
-  mode?: 'config' | 'skillignore' | 'audit';
+  mode?: 'config' | 'skillignore' | 'agentignore' | 'audit';
 }
 
 export default function ConfigStatusBar({

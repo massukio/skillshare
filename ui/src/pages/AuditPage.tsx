@@ -11,7 +11,10 @@ import {
   CircleCheck,
   Gauge,
   Eye,
+  Puzzle,
+  Bot,
 } from 'lucide-react';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { api } from '../api/client';
 import type { AuditAllResponse, AuditResult, AuditFinding } from '../api/client';
 import Card from '../components/Card';
@@ -26,8 +29,14 @@ import { radius, palette } from '../design';
 import { severityBadgeVariant } from '../lib/severity';
 import { BlockStamp, RiskMeter, riskColor, riskBgColor } from '../components/audit';
 import ScrollToTop from '../components/ScrollToTop';
+import KindBadge from '../components/KindBadge';
+import { queryKeys, staleTimes } from '../lib/queryKeys';
+import { getCachedAuditResult } from '../lib/auditCache';
 
 type SeverityFilter = 'CRITICAL' | 'HIGH' | 'MEDIUM' | 'LOW' | 'INFO';
+type AuditKind = 'skills' | 'agents';
+
+const CROSS_SKILL_NAME = '_cross-skill';
 
 const severityFilterOptions: { value: SeverityFilter; label: string }[] = [
   { value: 'INFO', label: 'All (INFO+)' },
@@ -39,13 +48,32 @@ const severityFilterOptions: { value: SeverityFilter; label: string }[] = [
 
 export default function AuditPage() {
   const { toast } = useToast();
-  const [data, setData] = useState<AuditAllResponse | null>(null);
+  const queryClient = useQueryClient();
+  const overviewQuery = useQuery({
+    queryKey: queryKeys.overview,
+    queryFn: () => api.getOverview(),
+    staleTime: staleTimes.overview,
+  });
+  const [activeKind, setActiveKind] = useState<AuditKind>('skills');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [minSeverity, setMinSeverity] = useState<SeverityFilter>('MEDIUM');
   const [progress, setProgress] = useState<{ scanned: number; total: number } | null>(null);
   const esRef = useRef<EventSource | null>(null);
   const startTimeRef = useRef<number>(0);
+  // Bump to trigger re-render after writing to query cache
+  const [, setCacheTick] = useState(0);
+
+  const installedCounts = {
+    skills: overviewQuery.data?.skillCount,
+    agents: overviewQuery.data?.agentCount,
+  };
+  const installedCount = installedCounts[activeKind];
+  const dataCache = {
+    skills: getCachedAuditResult(queryClient, 'skills', installedCounts.skills),
+    agents: getCachedAuditResult(queryClient, 'agents', installedCounts.agents),
+  };
+  const data = dataCache[activeKind];
 
   // Clean up EventSource on unmount
   useEffect(() => {
@@ -54,15 +82,19 @@ export default function AuditPage() {
     };
   }, []);
 
-  const totalFindings = useMemo(() => {
-    if (!data) return 0;
-    return data.results.reduce((sum, result) => sum + result.findings.length, 0);
+  // Exclude synthetic _cross-skill result from real scan results.
+  // Cross-skill analysis is a derived insight, not an actual scanned resource.
+  const realResults = useMemo(() => {
+    if (!data) return [];
+    return data.results.filter((r) => r.skillName !== CROSS_SKILL_NAME);
   }, [data]);
 
-  const filteredResults = useMemo(() => {
-    if (!data) return [];
+  const totalFindings = useMemo(() => {
+    return realResults.reduce((sum, result) => sum + result.findings.length, 0);
+  }, [realResults]);
 
-    return data.results
+  const filteredResults = useMemo(() => {
+    return realResults
       .map((result) => ({
         ...result,
         findings: result.findings.filter((finding) => isSeverityAtOrAbove(finding.severity, minSeverity)),
@@ -73,7 +105,7 @@ export default function AuditPage() {
         if (bySeverity !== 0) return bySeverity;
         return b.riskScore - a.riskScore;
       });
-  }, [data, minSeverity]);
+  }, [realResults, minSeverity]);
 
   const visibleFindings = useMemo(
     () => filteredResults.reduce((sum, result) => sum + result.findings.length, 0),
@@ -82,18 +114,24 @@ export default function AuditPage() {
 
   const showAuditToast = useCallback((res: AuditAllResponse) => {
     const { summary } = res;
+    const noun = activeKind === 'agents' ? 'agent(s)' : 'skill(s)';
     if (summary.failed > 0) {
-      toast(`Audit complete: ${summary.failed} skill(s) blocked at ${summary.threshold}+`, 'warning');
+      toast(`Audit complete: ${summary.failed} ${noun} blocked at ${summary.threshold}+`, 'warning');
     } else if (summary.warning > 0) {
-      toast(`Audit complete: ${summary.warning} skill(s) with warnings`, 'warning');
+      toast(`Audit complete: ${summary.warning} ${noun} with warnings`, 'warning');
     } else if (summary.low > 0 || summary.info > 0) {
       toast(`Audit complete: ${summary.low + summary.info} informational findings`, 'warning');
     } else {
-      toast('Audit complete: all skills passed', 'success');
+      toast(`Audit complete: all ${activeKind} passed`, 'success');
     }
-  }, [toast]);
+  }, [toast, activeKind]);
 
   const runAudit = () => {
+    if (installedCount === 0) {
+      toast(`No ${activeKind} installed to audit`, 'info');
+      return;
+    }
+
     setLoading(true);
     setError(null);
     setProgress(null);
@@ -103,7 +141,8 @@ export default function AuditPage() {
       (total) => setProgress({ scanned: 0, total }),
       (scanned) => setProgress((p) => p ? { ...p, scanned } : null),
       (res) => {
-        setData(res);
+        queryClient.setQueryData(queryKeys.audit.all(activeKind), res);
+        setCacheTick((n) => n + 1);
         setLoading(false);
         setProgress(null);
         showAuditToast(res);
@@ -114,6 +153,7 @@ export default function AuditPage() {
         setProgress(null);
         toast(err.message, 'error');
       },
+      activeKind,
     );
   };
 
@@ -124,7 +164,7 @@ export default function AuditPage() {
       <PageHeader
         icon={<ShieldCheck size={24} strokeWidth={2.5} />}
         title="Security Audit"
-        subtitle="Scan installed skills for malicious patterns and security threats"
+        subtitle="Scan installed skills and agents for malicious patterns and security threats"
         actions={
           <>
             <Link to="/audit/rules">
@@ -137,7 +177,7 @@ export default function AuditPage() {
               variant="primary"
               size="sm"
               onClick={runAudit}
-              disabled={loading}
+              disabled={loading || overviewQuery.isPending || installedCount === 0}
             >
               <ShieldCheck size={16} strokeWidth={2.5} />
               {loading ? 'Scanning...' : 'Run Audit'}
@@ -147,6 +187,43 @@ export default function AuditPage() {
       />
       </div>
 
+      {/* Kind tabs */}
+      <nav className="ss-resource-tabs flex items-center gap-6 border-b-2 border-muted -mx-4 px-4 md:-mx-8 md:px-8" role="tablist">
+        {([
+          { key: 'skills' as AuditKind, icon: <Puzzle size={16} strokeWidth={2.5} />, label: 'Skills', count: installedCounts.skills },
+          { key: 'agents' as AuditKind, icon: <Bot size={16} strokeWidth={2.5} />, label: 'Agents', count: installedCounts.agents },
+        ]).map((tab) => (
+          <button
+            key={tab.key}
+            role="tab"
+            aria-selected={activeKind === tab.key}
+            onClick={() => { if (!loading) setActiveKind(tab.key); }}
+            disabled={loading}
+            className={`
+              ss-resource-tab
+              inline-flex items-center gap-1.5 px-1 pb-2.5 text-sm font-semibold cursor-pointer
+              transition-all duration-150 border-b-[3px] -mb-[2px]
+              disabled:opacity-50
+              ${activeKind === tab.key
+                ? 'border-pencil text-pencil'
+                : 'border-transparent text-pencil-light hover:text-pencil hover:border-muted-dark'
+              }
+            `}
+          >
+            {tab.icon}
+            {tab.label}
+            {tab.count != null && (
+              <span className={`
+                text-[11px] font-medium px-1.5 py-0.5 rounded-[var(--radius-sm)]
+                ${activeKind === tab.key ? 'bg-pencil/10 text-pencil' : 'bg-muted text-pencil-light'}
+              `}>
+                {tab.count}
+              </span>
+            )}
+          </button>
+        ))}
+      </nav>
+
       {/* Loading / Progress */}
       {loading && (
         <StreamProgressBar
@@ -155,9 +232,9 @@ export default function AuditPage() {
           startTime={startTimeRef.current}
           icon={ShieldCheck}
           iconClassName="animate-pulse"
-          labelDiscovering="Scanning skills..."
-          labelRunning="Scanning skills..."
-          units="skills"
+          labelDiscovering={`Scanning ${activeKind}...`}
+          labelRunning={`Scanning ${activeKind}...`}
+          units={activeKind}
         />
       )}
 
@@ -192,7 +269,7 @@ export default function AuditPage() {
           {totalFindings === 0 ? (
             <EmptyState
               icon={ShieldCheck}
-              title="All skills passed security audit"
+              title={`All ${activeKind} passed security audit`}
               description="No malicious patterns or security threats detected"
             />
           ) : filteredResults.length === 0 ? (
@@ -222,7 +299,7 @@ export default function AuditPage() {
                 <span
                   className="font-medium"
                 >
-                  {data.summary.passed} skill{data.summary.passed !== 1 ? 's' : ''} passed with no issues
+                  {data.summary.passed} {activeKind === 'agents' ? 'agent' : 'skill'}{data.summary.passed !== 1 ? 's' : ''} passed with no issues
                 </span>
               </div>
             </Card>
@@ -231,11 +308,19 @@ export default function AuditPage() {
       )}
 
       {/* Initial state - no scan run yet */}
-      {!data && !loading && !error && (
+      {!data && !loading && !error && installedCount === 0 && (
         <EmptyState
           icon={ShieldCheck}
-          title="No audit results yet"
-          description="Click 'Run Audit' to scan your installed skills for security threats"
+          title={`No ${activeKind} installed`}
+          description={`Install ${activeKind === 'agents' ? 'an agent' : 'a skill'} first to run a security audit`}
+        />
+      )}
+
+      {!data && !loading && !error && installedCount !== 0 && (
+        <EmptyState
+          icon={ShieldCheck}
+          title={`No ${activeKind} audit results yet`}
+          description={`Click 'Run Audit' to scan your installed ${activeKind} for security threats`}
           action={
             <Button variant="primary" onClick={runAudit}>
               <ShieldCheck size={16} strokeWidth={2.5} /> Run Audit
@@ -257,20 +342,9 @@ function AuditSummaryLine({ summary }: { summary: AuditAllResponse['summary'] })
   return (
     <p className="text-sm text-pencil-light">
       <span className="font-medium text-pencil">{summary.total}</span> scanned
-      {summary.passed > 0 && (
-        <>{' · '}<span className="font-medium text-success">{summary.passed}</span> passed</>
-      )}
+      {' · '}<span className="font-medium text-success">{summary.passed}</span> passed
       {summary.failed > 0 && (
         <>{' · '}<span className="font-medium text-danger">{summary.failed}</span> blocked</>
-      )}
-      {summary.warning > 0 && (
-        <>{' · '}<span className="font-medium text-warning">{summary.warning}</span> warnings</>
-      )}
-      {summary.low > 0 && (
-        <>{' · '}<span className="font-medium text-blue">{summary.low}</span> low</>
-      )}
-      {summary.info > 0 && (
-        <>{' · '}<span className="text-pencil-light">{summary.info}</span> info</>
       )}
     </p>
   );
@@ -461,6 +535,8 @@ function TriagePanel({
 
 function SkillAuditCard({ result }: { result: AuditResult; index?: number }) {
   const maxSeverity = getMaxSeverity(result.findings);
+  const iconColor = riskColor(result.riskLabel);
+  const iconBg = riskBgColor(result.riskLabel);
 
   return (
     <Card className="!overflow-clip">
@@ -472,14 +548,8 @@ function SkillAuditCard({ result }: { result: AuditResult; index?: number }) {
           {/* Left: skill icon + name + issue count */}
           <div className="flex items-center gap-2.5 min-w-0">
             <div
-              className={`w-8 h-8 flex items-center justify-center border-2 shrink-0 ${
-                result.isBlocked
-                  ? 'bg-danger-light border-danger text-danger'
-                  : maxSeverity === 'HIGH' || maxSeverity === 'CRITICAL'
-                    ? 'bg-warning-light border-warning text-warning'
-                    : 'bg-info-light border-blue text-blue'
-              }`}
-              style={{ borderRadius: radius.sm }}
+              className="w-8 h-8 flex items-center justify-center border-2 shrink-0"
+              style={{ borderRadius: radius.sm, borderColor: iconColor, backgroundColor: iconBg, color: iconColor }}
             >
               {result.isBlocked ? (
                 <ShieldAlert size={16} strokeWidth={2.5} />
@@ -487,6 +557,7 @@ function SkillAuditCard({ result }: { result: AuditResult; index?: number }) {
                 <ShieldCheck size={16} strokeWidth={2.5} />
               )}
             </div>
+            {result.kind && <KindBadge kind={result.kind} />}
             <span
               className="font-bold text-pencil text-lg truncate"
             >

@@ -71,8 +71,8 @@ export default function NewSkillPage() {
 
   const existingNames = useMemo(() => {
     const names = new Set<string>();
-    if (skillsData?.skills) {
-      for (const s of skillsData.skills) {
+    if (skillsData?.resources) {
+      for (const s of skillsData.resources) {
         names.add(s.name);
       }
     }
@@ -136,7 +136,7 @@ export default function NewSkillPage() {
     if (stepIndex > 0) {
       setStepIndex(stepIndex - 1);
     } else {
-      navigate('/skills');
+      navigate('/resources');
     }
   }, [stepIndex, navigate]);
 
@@ -174,7 +174,7 @@ export default function NewSkillPage() {
       queryClient.invalidateQueries({ queryKey: queryKeys.skills.all });
       queryClient.invalidateQueries({ queryKey: queryKeys.overview });
       toast(`Skill "${res.skill.name}" created successfully!`, 'success');
-      navigate(`/skills/${encodeURIComponent(res.skill.flatName)}`);
+      navigate(`/resources/${encodeURIComponent(res.skill.flatName)}`);
     } catch (e: unknown) {
       toast((e as Error).message, 'error');
     } finally {
@@ -189,7 +189,7 @@ export default function NewSkillPage() {
       <PageHeader
         icon={<></>}
         title="Create New Skill"
-        backTo="/skills"
+        backTo="/resources"
       />
 
       {/* Progress bar */}

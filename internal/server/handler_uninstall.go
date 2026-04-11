@@ -18,11 +18,13 @@ import (
 
 type batchUninstallRequest struct {
 	Names []string `json:"names"`
+	Kind  string   `json:"kind,omitempty"`
 	Force bool     `json:"force"`
 }
 
 type batchUninstallItemResult struct {
 	Name         string `json:"name"`
+	Kind         string `json:"kind,omitempty"`
 	Success      bool   `json:"success"`
 	MovedToTrash bool   `json:"movedToTrash,omitempty"`
 	Error        string `json:"error,omitempty"`
@@ -47,7 +49,101 @@ func (s *Server) handleBatchUninstall(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "names array is required and must not be empty")
 		return
 	}
+	if body.Kind != "" && body.Kind != "skill" && body.Kind != "agent" {
+		writeError(w, http.StatusBadRequest, "invalid kind: "+body.Kind)
+		return
+	}
 
+	// Agent-mode batch uninstall
+	if body.Kind == "agent" {
+		s.handleBatchUninstallAgents(w, body, start)
+		return
+	}
+
+	// Skill-mode (default) batch uninstall
+	s.handleBatchUninstallSkills(w, body, start)
+}
+
+func (s *Server) handleBatchUninstallAgents(w http.ResponseWriter, body batchUninstallRequest, start time.Time) {
+	agentsSource := s.agentsSource()
+	if agentsSource == "" {
+		writeError(w, http.StatusInternalServerError, "agents source not configured")
+		return
+	}
+
+	results := make([]batchUninstallItemResult, 0, len(body.Names))
+	var removedNames []string
+	succeeded, failed := 0, 0
+	var firstErr string
+
+	for _, name := range body.Names {
+		res := batchUninstallItemResult{Name: name, Kind: "agent"}
+
+		agent, err := resolveAgentResource(agentsSource, name)
+		if err != nil {
+			res.Success = false
+			res.Error = "agent not found: " + name
+			results = append(results, res)
+			failed++
+			if firstErr == "" {
+				firstErr = res.Error
+			}
+			continue
+		}
+
+		displayName := agentMetaKey(agent.RelPath)
+		legacySidecar := filepath.Join(filepath.Dir(agent.SourcePath), filepath.Base(displayName)+".skillshare-meta.json")
+		if _, err := trash.MoveAgentToTrash(agent.SourcePath, legacySidecar, displayName, s.agentTrashBase()); err != nil {
+			res.Success = false
+			res.Error = fmt.Sprintf("failed to trash agent: %v", err)
+			results = append(results, res)
+			failed++
+			if firstErr == "" {
+				firstErr = res.Error
+			}
+			continue
+		}
+
+		removedNames = append(removedNames, displayName)
+		res.Success = true
+		res.MovedToTrash = true
+		results = append(results, res)
+		succeeded++
+	}
+
+	if succeeded > 0 && s.agentsStore != nil {
+		for _, name := range removedNames {
+			s.agentsStore.Remove(name)
+		}
+		if err := s.agentsStore.Save(agentsSource); err != nil {
+			log.Printf("warning: failed to save agent metadata after batch uninstall: %v", err)
+		}
+	}
+
+	status := "ok"
+	if failed > 0 && succeeded > 0 {
+		status = "partial"
+	} else if failed > 0 {
+		status = "error"
+	}
+
+	s.writeOpsLog("uninstall", status, start, map[string]any{
+		"names": body.Names,
+		"kind":  "agent",
+		"scope": "ui",
+		"count": succeeded,
+	}, firstErr)
+
+	writeJSON(w, map[string]any{
+		"results": results,
+		"summary": batchUninstallSummary{
+			Succeeded: succeeded,
+			Failed:    failed,
+		},
+	})
+}
+
+func (s *Server) handleBatchUninstallSkills(w http.ResponseWriter, body batchUninstallRequest, start time.Time) {
 	discovered, err := sync.DiscoverSourceSkills(s.cfg.Source)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to discover skills: "+err.Error())
@@ -68,7 +164,7 @@ func (s *Server) handleBatchUninstall(w http.ResponseWriter, r *http.Request) {
 	var firstErr string
 
 	for _, name := range body.Names {
-		res := batchUninstallItemResult{Name: name}
+		res := batchUninstallItemResult{Name: name, Kind: "skill"}
 
 		if strings.HasPrefix(name, "_") {
 			repoPath := filepath.Join(s.cfg.Source, name)
@@ -176,47 +272,45 @@ func (s *Server) handleBatchUninstall(w http.ResponseWriter, r *http.Request) {
 	if succeeded > 0 {
 		// removedPaths contains exact RelPaths (e.g. "frontend/vue/vue-best-practices")
 		// and repo dir names (e.g. "_team-skills"), collected during the uninstall loop.
-		filtered := make([]config.SkillEntry, 0, len(s.registry.Skills))
-		for _, entry := range s.registry.Skills {
-			fullName := entry.FullName()
-			if removedPaths[fullName] || removedPaths[entry.Name] {
+		for _, name := range s.skillsStore.List() {
+			entry := s.skillsStore.Get(name)
+			if entry == nil {
 				continue
 			}
-			// Tracked repos: registry stores group without "_" prefix (e.g., group="team-skills"
+			if removedPaths[name] {
+				s.skillsStore.Remove(name)
+				continue
+			}
+			// Tracked repos: store uses group without "_" prefix (e.g., group="team-skills"
 			// for repo dir "_team-skills"). Reconstruct the prefixed name to match removedPaths.
 			if entry.Group != "" && removedPaths["_"+entry.Group] {
+				s.skillsStore.Remove(name)
 				continue
 			}
 			// When a group directory is uninstalled, also remove its member skills
 			memberOfRemoved := false
 			for rp := range removedPaths {
-				if strings.HasPrefix(fullName, rp+"/") {
+				if strings.HasPrefix(name, rp+"/") {
 					memberOfRemoved = true
 					break
 				}
 			}
 			if memberOfRemoved {
-				continue
+				s.skillsStore.Remove(name)
 			}
-			filtered = append(filtered, entry)
 		}
-		s.registry.Skills = filtered
 
-		regDir := s.cfg.RegistryDir
-		if s.IsProjectMode() {
-			regDir = filepath.Join(s.projectRoot, ".skillshare")
-		}
-		if err := s.registry.Save(regDir); err != nil {
-			log.Printf("warning: failed to save registry: %v", err)
+		if err := s.skillsStore.Save(s.cfg.Source); err != nil {
+			log.Printf("warning: failed to save metadata: %v", err)
 		}
 
 		if s.IsProjectMode() {
 			if rErr := config.ReconcileProjectSkills(
-				s.projectRoot, s.projectCfg, s.registry, s.cfg.Source); rErr != nil {
+				s.projectRoot, s.projectCfg, s.skillsStore, s.cfg.Source); rErr != nil {
 				log.Printf("warning: failed to reconcile project skills config: %v", rErr)
 			}
 		} else {
-			if rErr := config.ReconcileGlobalSkills(s.cfg, s.registry); rErr != nil {
+			if rErr := config.ReconcileGlobalSkills(s.cfg, s.skillsStore); rErr != nil {
 				log.Printf("warning: failed to reconcile global skills config: %v", rErr)
 			}
 		}

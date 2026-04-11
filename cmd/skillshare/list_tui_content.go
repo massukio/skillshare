@@ -7,6 +7,7 @@ import (
 	"sort"
 	"strings"
 
+	"skillshare/internal/theme"
 	"skillshare/internal/utils"
 
 	tea "github.com/charmbracelet/bubbletea"
@@ -139,12 +140,37 @@ func buildVisibleNodes(all []treeNode) []treeNode {
 
 // loadContentForSkill populates the content viewer fields for the given skill.
 func loadContentForSkill(m *listTUIModel, e skillEntry) {
-	skillDir := filepath.Join(m.sourcePath, e.RelPath)
 	m.contentSkillKey = e.RelPath
+	m.contentKind = e.Kind
 	m.contentScroll = 0
 	m.treeCursor = 0
 	m.treeScroll = 0
 
+	if e.Kind == "agent" {
+		// Agents are single .md files — render directly, minimal tree
+		agentFile := filepath.Join(m.agentsSourcePath, e.RelPath)
+		data, err := os.ReadFile(agentFile)
+		if err != nil {
+			m.contentText = fmt.Sprintf("(error reading agent: %v)", err)
+			m.treeAllNodes = nil
+			m.treeNodes = nil
+			return
+		}
+		raw := strings.TrimSpace(string(data))
+		if raw == "" {
+			m.contentText = "(empty)"
+		} else {
+			w := m.contentPanelWidth()
+			m.contentText = hardWrapContent(renderMarkdown(raw, w), w)
+		}
+		// Single-file tree: just the agent .md file
+		m.treeAllNodes = []treeNode{{name: filepath.Base(e.RelPath), relPath: e.RelPath}}
+		m.treeNodes = m.treeAllNodes
+		return
+	}
+
+	// Existing skill directory logic
+	skillDir := filepath.Join(m.sourcePath, e.RelPath)
 	m.treeAllNodes = buildTreeNodes(skillDir)
 	m.treeNodes = buildVisibleNodes(m.treeAllNodes)
 
@@ -172,8 +198,13 @@ func loadContentFile(m *listTUIModel) {
 		return
 	}
 
-	skillDir := filepath.Join(m.sourcePath, m.contentSkillKey)
-	filePath := filepath.Join(skillDir, node.relPath)
+	var filePath string
+	if m.contentKind == "agent" {
+		filePath = filepath.Join(m.agentsSourcePath, node.relPath)
+	} else {
+		skillDir := filepath.Join(m.sourcePath, m.contentSkillKey)
+		filePath = filepath.Join(skillDir, node.relPath)
+	}
 
 	var rawText string
 	if node.name == "SKILL.md" {
@@ -212,13 +243,17 @@ func autoPreviewFile(m *listTUIModel) {
 	}
 }
 
-// contentPanelWidth returns the available text width for the right content panel.
-// This accounts for PaddingLeft(1) used in rendering, so content renders at
-// the exact width the panel can display without line-wrapping.
+// contentPanelWidth returns the available text width for the content panel.
+// Agents use full-width (no sidebar); skills use dual-pane layout.
 func (m *listTUIModel) contentPanelWidth() int {
+	if m.contentKind == "agent" {
+		w := m.termWidth - 4
+		if w < 40 {
+			w = 40
+		}
+		return w
+	}
 	sw := sidebarWidth(m.termWidth)
-	// lipgloss Width includes padding, so subtract 1 for PaddingLeft(1)
-	// Layout: leftMargin(1) + sidebar(sw) + PaddingLeft(1) + border(1) + PaddingLeft(1) + content + rightMargin(1)
 	w := m.termWidth - sw - 5 - 1
 	if w < 40 {
 		w = 40
@@ -238,10 +273,18 @@ func hardWrapContent(text string, width int) string {
 
 // ─── Glamour Markdown Rendering ──────────────────────────────────────
 
-// contentGlamourStyle returns a modified dark style with no backgrounds or margins
-// that would bleed or overflow in the constrained dual-pane layout.
+// contentGlamourStyle returns a glamour style tuned for the dual-pane list
+// detail view. The base config tracks the resolved terminal theme so body
+// text stays legible on light backgrounds (glamour's dark base uses light
+// gray prose which disappears on white). Backgrounds and margins are
+// stripped to avoid bleeding in the constrained layout.
 func contentGlamourStyle() ansi.StyleConfig {
-	s := styles.DarkStyleConfig
+	var s ansi.StyleConfig
+	if theme.Get().Mode == theme.ModeLight {
+		s = styles.LightStyleConfig
+	} else {
+		s = styles.DarkStyleConfig
+	}
 	zero := uint(0)
 
 	s.Document.Margin = &zero
@@ -282,8 +325,8 @@ func renderMarkdown(text string, width int) string {
 
 // ─── Keyboard Handling ───────────────────────────────────────────────
 
-// handleContentKey handles keyboard input in the dual-pane content viewer.
-// Keyboard always controls the left tree; Ctrl+d/u/g/G scroll the right panel.
+// handleContentKey handles keyboard input in the content viewer.
+// Agents (single file) only support scroll; skills support tree navigation + scroll.
 func (m listTUIModel) handleContentKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	switch msg.String() {
 	case "q", "ctrl+c":
@@ -293,35 +336,36 @@ func (m listTUIModel) handleContentKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.showContent = false
 		return m, nil
 
-	// Left tree: navigate
+	// Left tree: navigate (skills only — agents have no sidebar)
 	case "j", "down":
-		if m.treeCursor < len(m.treeNodes)-1 {
+		if m.contentKind != "agent" && m.treeCursor < len(m.treeNodes)-1 {
 			m.treeCursor++
 			m.ensureTreeCursorVisible()
 			autoPreviewFile(&m)
 		}
 		return m, nil
 	case "k", "up":
-		if m.treeCursor > 0 {
+		if m.contentKind != "agent" && m.treeCursor > 0 {
 			m.treeCursor--
 			m.ensureTreeCursorVisible()
 			autoPreviewFile(&m)
 		}
 		return m, nil
 	case "l", "right", "enter":
-		if len(m.treeNodes) > 0 && m.treeCursor < len(m.treeNodes) {
+		if m.contentKind != "agent" && len(m.treeNodes) > 0 && m.treeCursor < len(m.treeNodes) {
 			node := m.treeNodes[m.treeCursor]
 			if node.isDir {
 				toggleTreeDir(&m)
 			}
-			// Files are already auto-previewed by j/k
 		}
 		return m, nil
 	case "h", "left":
-		collapseOrParent(&m)
+		if m.contentKind != "agent" {
+			collapseOrParent(&m)
+		}
 		return m, nil
 
-	// Right content: scroll
+	// Content scroll
 	case "ctrl+d":
 		half := m.contentViewHeight() / 2
 		max := m.contentMaxScroll()
@@ -362,12 +406,54 @@ func sidebarWidth(termWidth int) int {
 	return w
 }
 
-// renderContentOverlay renders the full-screen dual-pane content viewer.
+// renderContentOverlay renders the full-screen content viewer.
+// Agents (single .md file) use a full-width layout without sidebar.
+// Skills (directory with multiple files) use a dual-pane layout with file tree.
 func renderContentOverlay(m listTUIModel) string {
+	if m.contentKind == "agent" {
+		return renderContentFullWidth(m)
+	}
+	return renderContentDualPane(m)
+}
+
+// renderContentFullWidth renders the content viewer without sidebar (for agents).
+func renderContentFullWidth(m listTUIModel) string {
 	var b strings.Builder
 
-	titleStyle := tc.Title
-	dimStyle := tc.Dim
+	skillName := filepath.Base(m.contentSkillKey)
+	b.WriteString("\n")
+	b.WriteString(theme.Title().Render(fmt.Sprintf("  %s", skillName)))
+	b.WriteString("\n\n")
+
+	textW := m.contentPanelWidth()
+	contentHeight := m.contentViewHeight()
+	contentStr, scrollInfo := renderContentStr(m, textW, contentHeight)
+
+	panelW := textW + 2 // +2 for PaddingLeft(2)
+	panel := lipgloss.NewStyle().
+		Width(panelW).MaxWidth(panelW).
+		Height(contentHeight).MaxHeight(contentHeight).
+		PaddingLeft(2).
+		Render(contentStr)
+	b.WriteString(panel)
+	b.WriteString("\n\n")
+
+	help := "Ctrl+d/u scroll  g/G top/bottom  Esc back  q quit"
+	if scrollInfo != "" {
+		help += "  " + scrollInfo
+	}
+	b.WriteString(formatHelpBar(help))
+	b.WriteString("\n")
+
+	return b.String()
+}
+
+// renderContentDualPane renders the dual-pane content viewer with file tree sidebar.
+func renderContentDualPane(m listTUIModel) string {
+	var b strings.Builder
+
+	titleStyle := theme.Title()
+	dimStyle := theme.Dim()
 
 	skillName := filepath.Base(m.contentSkillKey)
 	fileName := ""
@@ -403,7 +489,7 @@ func renderContentOverlay(m listTUIModel) string {
 		PaddingLeft(1).
 		Render(sidebarStr)
 
-	borderStyle := tc.Border.
+	borderStyle := theme.Dim().
 		Height(contentHeight).MaxHeight(contentHeight)
 	borderCol := strings.Repeat("│\n", contentHeight)
 	borderPanel := borderStyle.Render(strings.TrimRight(borderCol, "\n"))
@@ -422,7 +508,7 @@ func renderContentOverlay(m listTUIModel) string {
 	if scrollInfo != "" {
 		help += "  " + scrollInfo
 	}
-	b.WriteString(tc.Help.Render(help))
+	b.WriteString(formatHelpBar(help))
 	b.WriteString("\n")
 
 	return b.String()
@@ -434,10 +520,10 @@ func renderSidebarStr(m listTUIModel, width, height int) string {
 		return "(no files)"
 	}
 
-	selectedStyle := lipgloss.NewStyle().Bold(true).Foreground(tc.BrandYellow)
-	dirStyle := tc.Cyan
+	selectedStyle := lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("#D4D93C"))
+	dirStyle := theme.Accent()
 	fileStyle := lipgloss.NewStyle()
-	dimStyle := tc.Dim
+	dimStyle := theme.Dim()
 
 	total := len(m.treeNodes)
 	start := m.treeScroll

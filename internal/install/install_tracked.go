@@ -32,9 +32,12 @@ func installTrackedRepoImpl(source *Source, sourceDir string, opts InstallOption
 	destBase := sourceDir
 	if opts.Into != "" {
 		destBase = filepath.Join(sourceDir, opts.Into)
-		if err := os.MkdirAll(destBase, 0755); err != nil {
+	}
+	if err := os.MkdirAll(destBase, 0755); err != nil {
+		if opts.Into != "" {
 			return nil, fmt.Errorf("failed to create --into directory: %w", err)
 		}
+		return nil, fmt.Errorf("failed to create source directory: %w", err)
 	}
 	destPath := filepath.Join(destBase, trackedName)
 
@@ -87,8 +90,20 @@ func installTrackedRepoImpl(source *Source, sourceDir string, opts InstallOption
 		result.Skills = append(result.Skills, skill.Name)
 	}
 
-	if len(skills) == 0 {
-		result.Warnings = append(result.Warnings, "no SKILL.md files found in repository")
+	// Also discover agents in the tracked repo
+	agents := discoverAgents(destPath, len(skills) > 0)
+	result.AgentCount = len(agents)
+	if len(agents) > 0 {
+		for _, agent := range agents {
+			result.Agents = append(result.Agents, agent.Name)
+		}
+		result.Warnings = append(result.Warnings, fmt.Sprintf("%d agent(s) found in tracked repo", len(agents)))
+	}
+
+	if len(skills) == 0 && len(agents) == 0 {
+		result.Warnings = append(result.Warnings, "no SKILL.md files or agents found in repository")
+	} else if len(skills) == 0 {
+		// Only agents found — not a warning, just informational
 	}
 
 	// Security audit on the entire tracked repo
@@ -143,6 +158,16 @@ func updateTrackedRepo(repoPath string, result *TrackedRepoResult, opts InstallO
 	result.SkillCount = len(skills)
 	for _, skill := range skills {
 		result.Skills = append(result.Skills, skill.Name)
+	}
+
+	// Also discover agents in the tracked repo
+	agents := discoverAgents(repoPath, len(skills) > 0)
+	result.AgentCount = len(agents)
+	if len(agents) > 0 {
+		for _, agent := range agents {
+			result.Agents = append(result.Agents, agent.Name)
+		}
+		result.Warnings = append(result.Warnings, fmt.Sprintf("%d agent(s) found in tracked repo", len(agents)))
 	}
 
 	result.Action = "updated"

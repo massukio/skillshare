@@ -46,7 +46,7 @@ flowchart TD
         I1["skillshare install &lt;source&gt;"] --> I2{"Install mode"}
         I2 -- "Regular skill" --> I3{"Audit scan"}
         I3 -- "At/above threshold" --> I4["Blocked (unless --force) ✗"]
-        I3 -- "Pass / --force" --> I5["Write .skillshare-meta.json<br/>(sha256 per file)"]
+        I3 -- "Pass / --force" --> I5["Record in .metadata.json<br/>(sha256 per file)"]
         I5 --> I6["Installed skill ✓"]
         I2 -- "Tracked repo (--track)" --> I7["Clone repo with .git"]
         I7 --> I8{"Audit full repo<br/>(same threshold)"}

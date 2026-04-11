@@ -202,10 +202,15 @@ func TestTargetFilter_HelpShowsFilterFlags(t *testing.T) {
 
 	result := sb.RunCLI("target", "help")
 	result.AssertSuccess(t)
+	result.AssertOutputContains(t, "--agent-mode")
 	result.AssertOutputContains(t, "--add-include")
 	result.AssertOutputContains(t, "--add-exclude")
 	result.AssertOutputContains(t, "--remove-include")
 	result.AssertOutputContains(t, "--remove-exclude")
+	result.AssertOutputContains(t, "--add-agent-include")
+	result.AssertOutputContains(t, "--add-agent-exclude")
+	result.AssertOutputContains(t, "--remove-agent-include")
+	result.AssertOutputContains(t, "--remove-agent-exclude")
 	result.AssertOutputContains(t, "Project mode")
 }
 
@@ -221,5 +226,102 @@ func TestTargetFilter_Project_AddAndShow(t *testing.T) {
 	// Verify the include shows in info
 	info := sb.RunCLIInDir(projectRoot, "target", "claude", "-p")
 	info.AssertSuccess(t)
+	info.AssertOutputContains(t, "Include: team-*")
+}
+
+func TestTargetFilter_AgentAddInclude(t *testing.T) {
+	sb := testutil.NewSandbox(t)
+	defer sb.Cleanup()
+
+	targetPath := sb.CreateTarget("claude")
+	sb.WriteConfig(`source: ` + sb.SourcePath + `
+targets:
+  claude:
+    path: ` + targetPath + `
+`)
+
+	result := sb.RunCLI("target", "claude", "--add-agent-include", "team-*")
+	result.AssertSuccess(t)
+	result.AssertOutputContains(t, "added agent include: team-*")
+
+	configContent := sb.ReadFile(sb.ConfigPath)
+	if !strings.Contains(configContent, "agents:") {
+		t.Fatal("agents block should be written to config")
+	}
+	if !strings.Contains(configContent, "team-*") {
+		t.Fatal("agent include pattern should be in config")
+	}
+
+	info := sb.RunCLI("target", "claude")
+	info.AssertSuccess(t)
+	info.AssertOutputContains(t, "Agents:")
+	info.AssertOutputContains(t, "Include: team-*")
+}
+
+func TestTargetFilter_AgentModeAndSymlinkGuard(t *testing.T) {
+	sb := testutil.NewSandbox(t)
+	defer sb.Cleanup()
+
+	targetPath := sb.CreateTarget("claude")
+	sb.WriteConfig(`source: ` + sb.SourcePath + `
+targets:
+  claude:
+    path: ` + targetPath + `
+`)
+
+	mode := sb.RunCLI("target", "claude", "--agent-mode", "copy")
+	mode.AssertSuccess(t)
+	mode.AssertOutputContains(t, "Changed claude agent mode: merge -> copy")
+
+	info := sb.RunCLI("target", "claude")
+	info.AssertSuccess(t)
+	info.AssertOutputContains(t, "Agents:")
+	info.AssertOutputContains(t, "Mode:    copy")
+
+	sb.WriteConfig(`source: ` + sb.SourcePath + `
+targets:
+  claude:
+    path: ` + targetPath + `
+    agents:
+      mode: symlink
+`)
+
+	symlinkInfo := sb.RunCLI("target", "claude")
+	symlinkInfo.AssertSuccess(t)
+	symlinkInfo.AssertOutputContains(t, "Filters: ignored in symlink mode")
+
+	rejected := sb.RunCLI("target", "claude", "--add-agent-include", "team-*")
+	rejected.AssertFailure(t)
+	rejected.AssertAnyOutputContains(t, "ignored in symlink mode")
+}
+
+func TestTargetFilter_AgentUnsupportedTarget(t *testing.T) {
+	sb := testutil.NewSandbox(t)
+	defer sb.Cleanup()
+
+	targetPath := filepath.Join(sb.Root, "custom-skills")
+	sb.WriteConfig(`source: ` + sb.SourcePath + `
+targets:
+  custom-tool:
+    path: ` + targetPath + `
+`)
+
+	result := sb.RunCLI("target", "custom-tool", "--add-agent-include", "team-*")
+	result.AssertFailure(t)
+	result.AssertAnyOutputContains(t, "does not have an agents path")
+}
+
+func TestTargetFilter_Project_AgentAddAndShow(t *testing.T) {
+	sb := testutil.NewSandbox(t)
+	defer sb.Cleanup()
+	projectRoot := sb.SetupProjectDir("claude")
+
+	result := sb.RunCLIInDir(projectRoot, "target", "claude", "--add-agent-include", "team-*", "-p")
+	result.AssertSuccess(t)
+	result.AssertOutputContains(t, "added agent include: team-*")
+
+	info := sb.RunCLIInDir(projectRoot, "target", "claude", "-p")
+	info.AssertSuccess(t)
+	info.AssertOutputContains(t, "Agents:")
 	info.AssertOutputContains(t, "Include: team-*")
 }

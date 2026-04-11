@@ -440,7 +440,8 @@ targets:
 
 	result.AssertSuccess(t)
 	result.AssertOutputContains(t, "claude")
-	result.AssertOutputContains(t, "(merge)")
+	result.AssertOutputContains(t, "Mode:")
+	result.AssertOutputContains(t, "merge")
 }
 
 func TestTarget_NoSubcommand_ShowsUsage(t *testing.T) {

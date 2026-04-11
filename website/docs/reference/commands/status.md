@@ -24,36 +24,45 @@ skillshare status
 
 ```
 Source
-  ✓ ~/.config/skillshare/skills (12 skills, 2026-01-20 15:30)
+✓ ~/.config/skillshare/skills (12 skills, 2026-01-20 15:30)
+→ .skillignore: 5 patterns, 2 skills ignored
+✓ ~/.config/skillshare/agents (8 agents, 2026-01-20 15:30)
 
 Tracked Repositories
-  ✓ _team-skills          5 skills, up-to-date
-  ! _personal-repo        3 skills, has uncommitted changes
+_team-skills    ✓  5 skills, up-to-date
+_personal-repo  !  3 skills, has uncommitted changes
 
 Targets
-  ✓ claude    [merge] ~/.claude/skills (8 shared, 2 local)
-  ✓ cursor    [merge] ~/.cursor/skills (3 shared, 0 local)
-  ✓ codex     [merge] ~/.codex/skills (3 shared, 0 local)
-  ✓ copilot   [copy] ~/.copilot/skills (3 managed, 0 local)
-  ! windsurf  [merge->needs sync] ~/.windsurf/skills
-  ⚠ 2 skill(s) not synced — run 'skillshare sync'
+claude
+  skills   merged       [merge] ~/.claude/skills (8 shared, 2 local)
+  agents   merged       [merge] 8/8 linked
+cursor
+  skills   merged       [merge] ~/.cursor/skills (3 shared, 0 local)
+  agents   merged       [merge] 8/8 linked
+windsurf
+  skills   has files    [merge->needs sync] ~/.windsurf/skills
+⚠ 2 skill(s) not synced — run 'skillshare sync'
+
+Extras
+rules        has files  [merge] .cursor/rules (4 files)
+commands     has files  [merge] .claude/commands (3 files)
 
 Audit
-  Profile:    DEFAULT
-  Block:      severity >= CRITICAL
-  Dedupe:     GLOBAL
-  Analyzers:  ALL
+→ Profile:    DEFAULT
+→ Block:      severity >= CRITICAL
+→ Dedupe:     GLOBAL
+→ Analyzers:  ALL
 
 Version
-  ✓ CLI: 1.2.0
-  ✓ Skill: 1.1.0 (up to date)
+✓ CLI: 0.17.0
+✓ Skill: 0.17.0 (up to date)
 ```
 
 ## Sections
 
 ### Source
 
-Shows the source directory location, skill count, and last modified time.
+Shows the source directory location, skill count, and last modified time. When agents are configured, the agents source is shown on a separate line.
 
 ### Tracked Repositories
 
@@ -63,22 +72,34 @@ Lists git repositories installed with `--track`. Shows:
 
 ### Targets
 
-Shows each configured target with:
+Each target is shown as a header with sub-items for **skills** and **agents**:
+
+```
+claude
+  skills   merged       [merge] ~/.claude/skills (8 shared, 2 local)
+  agents   merged       [merge] 8/8 linked
+```
+
+**Skills sub-item** shows:
 - **Sync mode**: `merge`, `copy`, or `symlink`
 - **Path**: Target directory location
-- **Status**: `merged`, `linked`, `unlinked`, or `needs sync`
+- **Status**: `merged`, `copied`, `linked`, `has files`, or `needs sync`
 - **Shared/local counts**: In merge and copy modes, counts use that target's expected set (after `include`/`exclude` filters). Copy mode shows "managed" instead of "shared".
 
-If a target is in symlink mode, `include`/`exclude` is ignored.
+**Agents sub-item** shows:
+- **Status**: `synced` or `drift`
+- **Linked count**: e.g. `8/8 linked`
+
+If agents source does not exist or the target has no agent path configured, the agents sub-item is omitted.
 
 | Status | Meaning |
 |--------|---------|
-| `merged` | Skills are symlinked individually |
+| `merged` | Skills/agents are symlinked individually |
 | `copied` | Skills are copied as real files (with manifest) |
 | `linked` | Entire directory is symlinked |
-| `unlinked` | Not yet synced |
+| `has files` | Not yet synced |
 | `needs sync` | Mode changed, run `sync` to apply |
-| `not synced` | Some expected skills (after filters) are missing — run `sync` |
+| `drift` | Some agents are missing — run `sync agents` |
 
 ### Extras
 
@@ -86,11 +107,11 @@ When extras are configured, shows each extra's sync status:
 
 ```
 Extras
-  ✓ rules       2 files → ~/.claude/rules (merge)
-  ✓ commands    1 file  → ~/.cursor/commands (copy)
+rules        has files  [merge] .cursor/rules (4 files)
+commands     has files  [merge] .claude/commands (3 files)
 ```
 
-Each entry shows the file count, target path, and sync mode.
+Each entry shows the name, status, sync mode, target path, and file count.
 
 ### Audit
 
@@ -101,23 +122,15 @@ Shows the active audit policy configuration (resolved from CLI flags, project co
 - **Dedupe**: deduplication mode (`GLOBAL` or `LEGACY`)
 - **Analyzers**: enabled analyzers (`ALL` or a filtered list)
 
-```
-Audit
-  Profile:    DEFAULT
-  Block:      severity >= CRITICAL
-  Dedupe:     GLOBAL
-  Analyzers:  ALL
-```
-
 ### Version
 
-Compares your CLI and skill versions against the latest releases.
+Compares your CLI and skill versions against the latest releases. (Global mode only.)
 
 ## Options
 
 | Flag | Description |
 |------|-------------|
-| `--json` | Output as JSON (for scripting/CI; global mode only) |
+| `--json` | Output as JSON (for scripting/CI) |
 | `--project, -p` | Use project mode |
 | `--global, -g` | Use global mode |
 | `--help, -h` | Show help |
@@ -157,25 +170,31 @@ skillshare status --json
       "exclude": []
     }
   ],
+  "agents": {
+    "source": "~/.config/skillshare/agents",
+    "exists": true,
+    "count": 8,
+    "targets": [
+      {"name": "claude", "path": "~/.claude/agents", "expected": 8, "linked": 8, "drift": false}
+    ]
+  },
   "audit": {
     "profile": "DEFAULT",
     "threshold": "CRITICAL",
     "dedupe": "GLOBAL",
     "analyzers": []
   },
-  "version": "0.16.12"
+  "version": "0.17.0"
 }
 ```
 
 The `source.skillignore` field is present only when at least one `.skillignore` or `.skillignore.local` file exists. When absent: `"skillignore": { "active": false }`. The `files` array includes `.skillignore.local` paths when present. In text mode, the source line shows `.local active` when any `.skillignore.local` is in effect.
 
-:::note
-`--json` is only supported in global mode. In project mode, it returns an error.
-:::
+JSON output is supported in both global and project mode.
 
 ## Project Mode
 
-In a project directory, status shows project-specific information:
+In a project directory, status shows project-specific information. The first section header shows `Source (project)` to indicate project mode:
 
 ```bash
 skillshare status        # Auto-detected if .skillshare/ exists
@@ -185,18 +204,28 @@ skillshare status -p     # Explicit project mode
 ### Example Output
 
 ```
-Project Skills (.skillshare/)
-
-Source
-  ✓ .skillshare/skills (3 skills)
+Source (project)
+✓ .skillshare/skills/ (3 skills, 2026-04-08 12:43)
+→ .skillignore: 3 patterns, 0 skills ignored
+✓ .skillshare/agents/ (4 agents, 2026-04-08 12:43)
 
 Targets
-  ✓ claude       [merge] .claude/skills (3 synced)
-  ✓ cursor       [merge] .cursor/skills (3 synced)
+claude
+  skills   merged       [merge] .claude/skills (3 shared, 0 local)
+  agents   merged       [merge] 4/4 linked
+cursor
+  skills   merged       [merge] .cursor/skills (3 shared, 0 local)
+  agents   merged       [merge] 4/4 linked
 
-Remote Skills
-  ✓ pdf          anthropic/skills/pdf
-  ✓ review       github.com/team/tools
+Extras
+rules        has files  [merge] .cursor/rules (4 files)
+commands     has files  [merge] .claude/commands (3 files)
+
+Audit
+→ Profile:    DEFAULT
+→ Block:      severity >= CRITICAL
+→ Dedupe:     GLOBAL
+→ Analyzers:  ALL
 ```
 
 Project status does not show Tracked Repositories or Version sections (these are global-only features).

@@ -15,7 +15,7 @@ import (
 
 func TestHandleGetTemplates(t *testing.T) {
 	s, _ := newTestServer(t)
-	req := httptest.NewRequest(http.MethodGet, "/api/skills/templates", nil)
+	req := httptest.NewRequest(http.MethodGet, "/api/resources/templates", nil)
 	rr := httptest.NewRecorder()
 	s.handler.ServeHTTP(rr, req)
 
@@ -51,7 +51,7 @@ func TestHandleCreateSkill_Success(t *testing.T) {
 	s, src := newTestServer(t)
 
 	body := `{"name":"my-tool","pattern":"tool-wrapper","category":"library","scaffoldDirs":["references"]}`
-	req := httptest.NewRequest(http.MethodPost, "/api/skills", bytes.NewBufferString(body))
+	req := httptest.NewRequest(http.MethodPost, "/api/resources", bytes.NewBufferString(body))
 	rr := httptest.NewRecorder()
 	s.handler.ServeHTTP(rr, req)
 
@@ -118,7 +118,7 @@ func TestHandleCreateSkill_EmptyScaffoldDirs(t *testing.T) {
 	s, src := newTestServer(t)
 
 	body := `{"name":"simple-skill","pattern":"tool-wrapper","category":"library","scaffoldDirs":[]}`
-	req := httptest.NewRequest(http.MethodPost, "/api/skills", bytes.NewBufferString(body))
+	req := httptest.NewRequest(http.MethodPost, "/api/resources", bytes.NewBufferString(body))
 	rr := httptest.NewRecorder()
 	s.handler.ServeHTTP(rr, req)
 
@@ -162,7 +162,7 @@ func TestHandleCreateSkill_InvalidName(t *testing.T) {
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			req := httptest.NewRequest(http.MethodPost, "/api/skills", bytes.NewBufferString(tc.body))
+			req := httptest.NewRequest(http.MethodPost, "/api/resources", bytes.NewBufferString(tc.body))
 			rr := httptest.NewRecorder()
 			s.handler.ServeHTTP(rr, req)
 
@@ -184,7 +184,7 @@ func TestHandleCreateSkill_Duplicate(t *testing.T) {
 	addSkill(t, src, "existing-skill")
 
 	body := `{"name":"existing-skill","pattern":"none","category":"","scaffoldDirs":[]}`
-	req := httptest.NewRequest(http.MethodPost, "/api/skills", bytes.NewBufferString(body))
+	req := httptest.NewRequest(http.MethodPost, "/api/resources", bytes.NewBufferString(body))
 	rr := httptest.NewRecorder()
 	s.handler.ServeHTTP(rr, req)
 
@@ -204,7 +204,7 @@ func TestHandleCreateSkill_InvalidScaffoldDir(t *testing.T) {
 
 	// tool-wrapper only allows "references", not "assets"
 	body := `{"name":"bad-dirs","pattern":"tool-wrapper","category":"library","scaffoldDirs":["assets"]}`
-	req := httptest.NewRequest(http.MethodPost, "/api/skills", bytes.NewBufferString(body))
+	req := httptest.NewRequest(http.MethodPost, "/api/resources", bytes.NewBufferString(body))
 	rr := httptest.NewRecorder()
 	s.handler.ServeHTTP(rr, req)
 
@@ -223,7 +223,7 @@ func TestHandleCreateSkill_NonePattern(t *testing.T) {
 	s, src := newTestServer(t)
 
 	body := `{"name":"plain-skill","pattern":"none","category":"","scaffoldDirs":[]}`
-	req := httptest.NewRequest(http.MethodPost, "/api/skills", bytes.NewBufferString(body))
+	req := httptest.NewRequest(http.MethodPost, "/api/resources", bytes.NewBufferString(body))
 	rr := httptest.NewRecorder()
 	s.handler.ServeHTTP(rr, req)
 

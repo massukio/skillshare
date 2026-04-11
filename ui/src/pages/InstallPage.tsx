@@ -14,8 +14,8 @@ export default function InstallPage() {
     <div className="space-y-5 animate-fade-in">
       <PageHeader
         icon={<Download size={24} strokeWidth={2.5} />}
-        title="Install Skill"
-        subtitle="Install from any git repository or local path"
+        title="Install Resources"
+        subtitle="Install skills or agents from any git repository or local path"
       />
 
       <div data-tour="install-form">

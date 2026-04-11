@@ -114,8 +114,16 @@ func (s *Server) handleAvailableTargets(w http.ResponseWriter, r *http.Request) 
 	type availTarget struct {
 		Name      string `json:"name"`
 		Path      string `json:"path"`
+		AgentPath string `json:"agentPath,omitempty"`
 		Installed bool   `json:"installed"`
 		Detected  bool   `json:"detected"`
+	}
+
+	var agentDefaults map[string]config.TargetConfig
+	if isProjectMode {
+		agentDefaults = config.ProjectAgentTargets()
+	} else {
+		agentDefaults = config.DefaultAgentTargets()
 	}
 
 	items := make([]availTarget, 0, len(defaults))
@@ -129,12 +137,16 @@ func (s *Server) handleAvailableTargets(w http.ResponseWriter, r *http.Request) 
 				detected = true
 			}
 		}
-		items = append(items, availTarget{
+		item := availTarget{
 			Name:      name,
 			Path:      tc.Path,
 			Installed: installed,
 			Detected:  detected,
-		})
+		}
+		if agentTC, ok := agentDefaults[name]; ok {
+			item.AgentPath = agentTC.Path
+		}
+		items = append(items, item)
 	}
 
 	writeJSON(w, map[string]any{"targets": items})

@@ -20,6 +20,7 @@ Complete reference for all skillshare commands.
 | Temporarily hide a skill without removing it | [`enable` / `disable`](./enable.md) |
 | Sync across machines | [`push`](./push.md) / [`pull`](./pull.md) |
 | Manage non-skill resources (rules, commands) | [`extras`](./extras.md) |
+| Manage single-file `.md` agents | Most commands accept `agents` or `--kind agent` — see [Agents](/docs/understand/agents) |
 | See which skills use the most context tokens | [`analyze`](./analyze.md) |
 | Fix something broken | [`doctor`](./doctor.md) |
 | Open the web dashboard | [`ui`](./ui.md) |

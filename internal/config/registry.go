@@ -127,3 +127,62 @@ func (r *Registry) Save(dir string) error {
 
 	return nil
 }
+
+// LoadUnifiedRegistry merges registries from both skills and agents source
+// directories into a single Registry. Used in global mode where skills and
+// agents have separate registry files.
+// Skills entries get Kind="" (backward compat), agent entries get Kind="agent".
+func LoadUnifiedRegistry(skillsDir, agentsDir string) (*Registry, error) {
+	skillsReg, err := LoadRegistry(skillsDir)
+	if err != nil {
+		return nil, fmt.Errorf("failed to load skills registry: %w", err)
+	}
+
+	agentsReg, err := LoadRegistry(agentsDir)
+	if err != nil {
+		return nil, fmt.Errorf("failed to load agents registry: %w", err)
+	}
+
+	// Ensure agent entries have Kind set
+	for i := range agentsReg.Skills {
+		if agentsReg.Skills[i].Kind == "" {
+			agentsReg.Skills[i].Kind = "agent"
+		}
+	}
+
+	unified := &Registry{
+		Skills: make([]SkillEntry, 0, len(skillsReg.Skills)+len(agentsReg.Skills)),
+	}
+	unified.Skills = append(unified.Skills, skillsReg.Skills...)
+	unified.Skills = append(unified.Skills, agentsReg.Skills...)
+
+	return unified, nil
+}
+
+// SaveSplitByKind splits the unified registry by kind and saves each to
+// the appropriate directory. Skills (Kind="" or "skill") go to skillsDir,
+// agents (Kind="agent") go to agentsDir.
+func (r *Registry) SaveSplitByKind(skillsDir, agentsDir string) error {
+	skillsReg := &Registry{}
+	agentsReg := &Registry{}
+
+	for _, entry := range r.Skills {
+		if entry.EffectiveKind() == "agent" {
+			agentsReg.Skills = append(agentsReg.Skills, entry)
+		} else {
+			skillsReg.Skills = append(skillsReg.Skills, entry)
+		}
+	}
+
+	if err := skillsReg.Save(skillsDir); err != nil {
+		return fmt.Errorf("failed to save skills registry: %w", err)
+	}
+
+	if len(agentsReg.Skills) > 0 {
+		if err := agentsReg.Save(agentsDir); err != nil {
+			return fmt.Errorf("failed to save agents registry: %w", err)
+		}
+	}
+
+	return nil
+}

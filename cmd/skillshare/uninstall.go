@@ -23,9 +23,10 @@ import (
 
 // uninstallOptions holds parsed arguments for uninstall command
 type uninstallOptions struct {
-	skillNames []string // positional args (0+)
-	groups     []string // --group/-G values (repeatable)
-	all        bool     // --all: remove ALL skills from source
+	skillNames []string           // positional args (0+)
+	groups     []string           // --group/-G values (repeatable)
+	kind       resourceKindFilter // set by positional filter (e.g. "uninstall agents")
+	all        bool               // --all: remove ALL skills from source
 	force      bool
 	dryRun     bool
 	jsonOutput bool
@@ -396,7 +397,7 @@ func (s uninstallTypeSummary) details() string {
 }
 
 // displayUninstallInfo shows information about the skill to be uninstalled
-func displayUninstallInfo(target *uninstallTarget) {
+func displayUninstallInfo(target *uninstallTarget, store *install.MetadataStore) {
 	if target.isTrackedRepo {
 		ui.Header("Uninstalling tracked repository")
 		ui.Info("Type: tracked repository")
@@ -411,9 +412,11 @@ func displayUninstallInfo(target *uninstallTarget) {
 		} else {
 			ui.Header("Uninstalling skill")
 		}
-		if meta, err := install.ReadMeta(target.path); err == nil && meta != nil {
-			ui.Info("Source: %s", meta.Source)
-			ui.Info("Installed: %s", meta.InstalledAt.Format("2006-01-02 15:04"))
+		if entry := store.Get(target.name); entry != nil {
+			ui.Info("Source: %s", entry.Source)
+			if !entry.InstalledAt.IsZero() {
+				ui.Info("Installed: %s", entry.InstalledAt.Format("2006-01-02 15:04"))
+			}
 		}
 	}
 	ui.Info("Name: %s", target.name)
@@ -491,9 +494,9 @@ func performUninstallQuiet(target *uninstallTarget) (typeLabel string, err error
 
 // performUninstall moves the skill to trash (verbose single-target output).
 // Note: .gitignore cleanup is handled in batch by the caller.
-func performUninstall(target *uninstallTarget) error {
+func performUninstall(target *uninstallTarget, store *install.MetadataStore) error {
 	// Read metadata before moving (for reinstall hint)
-	meta, _ := install.ReadMeta(target.path)
+	entry := store.Get(target.name)
 	groupSkillCount := 0
 	if !target.isTrackedRepo {
 		groupSkillCount = len(countGroupSkills(target.path))
@@ -512,8 +515,8 @@ func performUninstall(target *uninstallTarget) error {
 		ui.Success("Uninstalled skill: %s", target.name)
 	}
 	ui.Info("Moved to trash (7 days): %s", trashPath)
-	if meta != nil && meta.Source != "" {
-		ui.Info("Reinstall: skillshare install %s", meta.Source)
+	if entry != nil && entry.Source != "" {
+		ui.Info("Reinstall: skillshare install %s", entry.Source)
 	}
 	ui.SectionLabel("Next Steps")
 	ui.Info("Run 'skillshare sync' to update all targets")
@@ -549,7 +552,20 @@ func cmdUninstall(args []string) error {
 
 	applyModeLabel(mode)
 
+	// Extract kind filter (e.g. "skillshare uninstall agents myagent").
+	kind, rest := parseKindArg(rest)
+
 	if mode == modeProject {
+		if kind == kindAgents {
+			agentsDir := filepath.Join(cwd, ".skillshare", "agents")
+			opts, _, _ := parseUninstallArgs(rest)
+			if opts == nil {
+				opts = &uninstallOptions{skillNames: rest}
+			}
+			opts.force = opts.force || opts.jsonOutput
+			err := cmdUninstallAgents(agentsDir, opts, config.ProjectConfigPath(cwd), trash.ProjectAgentTrashDir(cwd), start)
+			return err
+		}
 		err := cmdUninstallProject(rest, cwd)
 		logUninstallOp(config.ProjectConfigPath(cwd), uninstallOpNames(rest), 0, start, err)
 		return err
@@ -575,6 +591,19 @@ func cmdUninstall(args []string) error {
 			return writeJSONError(fmt.Errorf("failed to load config: %w", err))
 		}
 		return fmt.Errorf("failed to load config: %w", err)
+	}
+
+	// Agent-only uninstall: move .md + sidecar to agent trash, then return.
+	if kind == kindAgents {
+		agentsDir := cfg.EffectiveAgentsSource()
+		err := cmdUninstallAgents(agentsDir, opts, config.ConfigPath(), trash.AgentTrashDir(), start)
+		return err
+	}
+
+	// Load centralized metadata store for display/reinstall hints.
+	skillsStore, _ := install.LoadMetadataWithMigration(cfg.Source, "")
+	if skillsStore == nil {
+		skillsStore = install.NewMetadataStore()
 	}
 
 	// --- Phase 1: RESOLVE ---
@@ -711,7 +740,7 @@ func cmdUninstall(args []string) error {
 	if opts.jsonOutput {
 		// Skip display in JSON mode
 	} else if single {
-		displayUninstallInfo(targets[0])
+		displayUninstallInfo(targets[0], skillsStore)
 	} else {
 		ui.Header(fmt.Sprintf("Uninstalling %d %s", len(targets), summary.noun()))
 		if len(targets) > 20 {
@@ -853,8 +882,8 @@ func cmdUninstall(args []string) error {
 			if t.isTrackedRepo {
 				ui.Warning("[dry-run] would remove %s from .gitignore", t.name)
 			}
-			if meta, err := install.ReadMeta(t.path); err == nil && meta != nil && meta.Source != "" {
-				ui.Info("[dry-run] Reinstall: skillshare install %s", meta.Source)
+			if entry := skillsStore.Get(t.name); entry != nil && entry.Source != "" {
+				ui.Info("[dry-run] Reinstall: skillshare install %s", entry.Source)
 			}
 		}
 		return nil
@@ -1015,7 +1044,7 @@ func cmdUninstall(args []string) error {
 		}
 	} else {
 		for _, t := range targets {
-			if err := performUninstall(t); err != nil {
+			if err := performUninstall(t, skillsStore); err != nil {
 				failed = append(failed, fmt.Sprintf("%s: %v", t.name, err))
 			} else {
 				succeeded = append(succeeded, t)
@@ -1039,42 +1068,15 @@ func cmdUninstall(args []string) error {
 	}
 
 	// --- Phase 7: FINALIZE ---
-	// Batch-remove succeeded skills from registry
+	// Batch-remove succeeded skills from metadata store
 	if len(succeeded) > 0 {
-		regDir := cfg.RegistryDir
-		reg, regErr := config.LoadRegistry(regDir)
-		if regErr != nil {
-			ui.Warning("Failed to load registry: %v", regErr)
-		} else if len(reg.Skills) > 0 {
-			removedNames := map[string]bool{}
-			for _, t := range succeeded {
-				removedNames[t.name] = true
-			}
-			updated := make([]config.SkillEntry, 0, len(reg.Skills))
-			for _, s := range reg.Skills {
-				fullName := s.FullName()
-				if removedNames[fullName] {
-					continue
-				}
-				// When a group directory is uninstalled, also remove its member skills
-				memberOfRemoved := false
-				for name := range removedNames {
-					if strings.HasPrefix(fullName, name+"/") {
-						memberOfRemoved = true
-						break
-					}
-				}
-				if memberOfRemoved {
-					continue
-				}
-				updated = append(updated, s)
-			}
-			if len(updated) != len(reg.Skills) {
-				reg.Skills = updated
-				if saveErr := reg.Save(regDir); saveErr != nil {
-					ui.Warning("Failed to update registry after uninstall: %v", saveErr)
-				}
-			}
+		removedNames := map[string]bool{}
+		for _, t := range succeeded {
+			removedNames[t.name] = true
+		}
+		skillsStore.RemoveByNames(removedNames)
+		if saveErr := skillsStore.Save(cfg.Source); saveErr != nil {
+			ui.Warning("Failed to update metadata after uninstall: %v", saveErr)
 		}
 	}
 
@@ -1152,6 +1154,7 @@ func logUninstallOp(cfgPath string, names []string, succeeded int, start time.Ti
 
 func printUninstallHelp() {
 	fmt.Println(`Usage: skillshare uninstall <name>... [options]
+       skillshare uninstall [agents] <name|--all> [options]
        skillshare uninstall --group <group> [options]
        skillshare uninstall --all [options]
 
@@ -1187,5 +1190,8 @@ Examples:
   skillshare uninstall --group frontend -n   # Preview group removal
   skillshare uninstall x -G backend --force  # Mix names and groups
   skillshare uninstall _team-repo            # Remove tracked repository
-  skillshare uninstall team-repo             # _ prefix is optional`)
+  skillshare uninstall team-repo             # _ prefix is optional
+  skillshare uninstall agents tutor          # Uninstall an agent
+  skillshare uninstall agents --all          # Uninstall all agents
+  skillshare uninstall agents -G demo        # Uninstall all agents in demo/`)
 }

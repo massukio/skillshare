@@ -11,6 +11,7 @@ import (
 	"skillshare/internal/audit"
 	"skillshare/internal/config"
 	"skillshare/internal/git"
+	"skillshare/internal/resource"
 	"skillshare/internal/skillignore"
 	"skillshare/internal/sync"
 	"skillshare/internal/ui"
@@ -23,6 +24,7 @@ type statusJSONOutput struct {
 	SkillCount   int                `json:"skill_count"`
 	TrackedRepos []statusJSONRepo   `json:"tracked_repos"`
 	Targets      []statusJSONTarget `json:"targets"`
+	Agents       *statusJSONAgents  `json:"agents,omitempty"`
 	Audit        statusJSONAudit    `json:"audit"`
 	Version      string             `json:"version"`
 }
@@ -139,23 +141,21 @@ func cmdStatus(args []string) error {
 	}
 
 	// JSON mode
+	output := statusJSONOutput{
+		Version: version,
+	}
+
 	discovered, stats, _ := sync.DiscoverSourceSkillsWithStats(cfg.Source)
 	trackedRepos := extractTrackedRepos(discovered)
 
-	output := statusJSONOutput{
-		Source: statusJSONSource{
-			Path:        cfg.Source,
-			Exists:      dirExists(cfg.Source),
-			Skillignore: buildSkillignoreJSON(stats),
-		},
-		SkillCount: len(discovered),
-		Version:    version,
+	output.Source = statusJSONSource{
+		Path:        cfg.Source,
+		Exists:      dirExists(cfg.Source),
+		Skillignore: buildSkillignoreJSON(stats),
 	}
-
-	// Tracked repos (parallel dirty checks)
+	output.SkillCount = len(discovered)
 	output.TrackedRepos = buildTrackedRepoJSON(cfg.Source, trackedRepos, discovered)
 
-	// Targets
 	for name, target := range cfg.Targets {
 		sc := target.SkillsConfig()
 		tMode := getTargetMode(sc.Mode, cfg.Mode)
@@ -171,7 +171,6 @@ func cmdStatus(args []string) error {
 		})
 	}
 
-	// Audit
 	policy := audit.ResolvePolicy(audit.PolicyInputs{
 		ConfigProfile:   cfg.Audit.Profile,
 		ConfigThreshold: cfg.Audit.BlockThreshold,
@@ -184,6 +183,8 @@ func cmdStatus(args []string) error {
 		Dedupe:    string(policy.DedupeMode),
 		Analyzers: policy.EffectiveAnalyzers(),
 	}
+
+	output.Agents = buildAgentStatusJSON(cfg)
 
 	return writeJSON(&output)
 }
@@ -222,6 +223,20 @@ func printSourceStatus(cfg *config.Config, skillCount int, stats *skillignore.Ig
 
 	ui.Success("%s (%d skills, %s)", cfg.Source, skillCount, info.ModTime().Format("2006-01-02 15:04"))
 	printSkillignoreLine(stats)
+
+	// Agents source
+	agentsSource := cfg.EffectiveAgentsSource()
+	if agentsInfo, agentsErr := os.Stat(agentsSource); agentsErr == nil {
+		agentCount := 0
+		if entries, readErr := os.ReadDir(agentsSource); readErr == nil {
+			for _, e := range entries {
+				if !e.IsDir() && strings.HasSuffix(strings.ToLower(e.Name()), ".md") {
+					agentCount++
+				}
+			}
+		}
+		ui.Success("%s (%d agents, %s)", agentsSource, agentCount, agentsInfo.ModTime().Format("2006-01-02 15:04"))
+	}
 }
 
 func printSkillignoreLine(stats *skillignore.IgnoreStats) {
@@ -355,12 +370,26 @@ type targetStatusResult struct {
 
 func printTargetsStatus(cfg *config.Config, discovered []sync.DiscoveredSkill) error {
 	ui.Header("Targets")
+
+	builtinAgents := config.DefaultAgentTargets()
+	agentsSource := cfg.EffectiveAgentsSource()
+	agentsExist := dirExists(agentsSource)
+	var agentCount int
+	if agentsExist {
+		agents, _ := resource.AgentKind{}.Discover(agentsSource)
+		agentCount = len(agents)
+	}
+
 	driftTotal := 0
 	for name, target := range cfg.Targets {
+		// Target name header
+		fmt.Printf("%s%s%s\n", ui.Bold, name, ui.Reset)
+
+		// Skills sub-item
 		sc := target.SkillsConfig()
 		mode := getTargetMode(sc.Mode, cfg.Mode)
 		res := getTargetStatusDetail(target, cfg.Source, mode)
-		ui.Status(name, res.statusStr, res.detail)
+		printTargetSubItem("skills", res.statusStr, res.detail)
 
 		if mode == "merge" || mode == "copy" {
 			filtered, err := sync.FilterSkills(discovered, sc.Include, sc.Exclude)
@@ -379,11 +408,40 @@ func printTargetsStatus(cfg *config.Config, discovered []sync.DiscoveredSkill) e
 		} else if len(sc.Include) > 0 || len(sc.Exclude) > 0 {
 			ui.Warning("%s: include/exclude ignored in symlink mode", name)
 		}
+
+		// Agents sub-item
+		if agentsExist {
+			agentPath := resolveAgentTargetPath(target, builtinAgents, name)
+			if agentPath != "" {
+				linked := countLinkedAgents(agentPath)
+				agentStatus := "merged"
+				driftLabel := ""
+				if linked != agentCount && agentCount > 0 {
+					agentStatus = "drift"
+					driftLabel = ui.Yellow + " (drift)" + ui.Reset
+				}
+				printTargetSubItem("agents", agentStatus, fmt.Sprintf("[merge] %d/%d linked%s", linked, agentCount, driftLabel))
+			}
+		}
 	}
 	if driftTotal > 0 {
 		ui.Warning("%d skill(s) not synced — run 'skillshare sync'", driftTotal)
 	}
 	return nil
+}
+
+// printTargetSubItem prints an indented sub-item line under a target.
+func printTargetSubItem(kind, status, detail string) {
+	statusColor := ui.Gray
+	switch status {
+	case "merged", "synced", "copied", "linked":
+		statusColor = ui.Green
+	case "drift", "not exist":
+		statusColor = ui.Yellow
+	case "conflict", "broken":
+		statusColor = ui.Red
+	}
+	fmt.Printf("  %-8s %s%-12s%s %s\n", kind, statusColor, status, ui.Reset, ui.Dim+detail+ui.Reset)
 }
 
 func getTargetMode(targetMode, globalMode string) string {
@@ -503,7 +561,7 @@ func checkSkillVersion(cfg *config.Config) {
 func printStatusHelp() {
 	fmt.Println(`Usage: skillshare status [options]
 
-Show status of source, skills, and all targets.
+Show status of source, skills, agents, and all targets.
 
 Options:
   --json            Output results as JSON
@@ -512,7 +570,7 @@ Options:
   --help, -h        Show this help
 
 Examples:
-  skillshare status              Show current state
+  skillshare status              Show current state (skills + agents)
   skillshare status --json       Output as JSON
   skillshare status -p           Show project status`)
 }

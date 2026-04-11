@@ -130,6 +130,127 @@ func TestMigrateGlobalSkills_NoMigrationWhenRegistryExists(t *testing.T) {
 	}
 }
 
+func TestLoadUnifiedRegistry_MergesBoth(t *testing.T) {
+	skillsDir := t.TempDir()
+	agentsDir := t.TempDir()
+
+	// Write skills registry
+	skillsReg := &Registry{
+		Skills: []SkillEntry{
+			{Name: "my-skill", Source: "github.com/user/skills-repo"},
+		},
+	}
+	if err := skillsReg.Save(skillsDir); err != nil {
+		t.Fatalf("Save skills: %v", err)
+	}
+
+	// Write agents registry
+	agentsReg := &Registry{
+		Skills: []SkillEntry{
+			{Name: "my-agent", Source: "github.com/user/agents-repo"},
+		},
+	}
+	if err := agentsReg.Save(agentsDir); err != nil {
+		t.Fatalf("Save agents: %v", err)
+	}
+
+	unified, err := LoadUnifiedRegistry(skillsDir, agentsDir)
+	if err != nil {
+		t.Fatalf("LoadUnifiedRegistry: %v", err)
+	}
+
+	if len(unified.Skills) != 2 {
+		t.Fatalf("expected 2 entries, got %d", len(unified.Skills))
+	}
+
+	// Agent entry should have Kind="agent"
+	for _, e := range unified.Skills {
+		if e.Name == "my-agent" && e.EffectiveKind() != "agent" {
+			t.Errorf("agent entry should have kind=agent, got %q", e.Kind)
+		}
+		if e.Name == "my-skill" && e.EffectiveKind() != "skill" {
+			t.Errorf("skill entry should have kind=skill, got %q", e.Kind)
+		}
+	}
+}
+
+func TestLoadUnifiedRegistry_EmptyAgents(t *testing.T) {
+	skillsDir := t.TempDir()
+	agentsDir := t.TempDir() // no registry file
+
+	skillsReg := &Registry{
+		Skills: []SkillEntry{
+			{Name: "s1", Source: "test"},
+		},
+	}
+	skillsReg.Save(skillsDir)
+
+	unified, err := LoadUnifiedRegistry(skillsDir, agentsDir)
+	if err != nil {
+		t.Fatalf("LoadUnifiedRegistry: %v", err)
+	}
+	if len(unified.Skills) != 1 {
+		t.Fatalf("expected 1 entry, got %d", len(unified.Skills))
+	}
+}
+
+func TestSaveSplitByKind_RoundTrip(t *testing.T) {
+	skillsDir := t.TempDir()
+	agentsDir := t.TempDir()
+
+	unified := &Registry{
+		Skills: []SkillEntry{
+			{Name: "skill-a", Source: "s1"},
+			{Name: "agent-b", Source: "s2", Kind: "agent"},
+			{Name: "skill-c", Source: "s3", Kind: "skill"},
+		},
+	}
+
+	if err := unified.SaveSplitByKind(skillsDir, agentsDir); err != nil {
+		t.Fatalf("SaveSplitByKind: %v", err)
+	}
+
+	// Load back separately
+	skillsReg, err := LoadRegistry(skillsDir)
+	if err != nil {
+		t.Fatalf("LoadRegistry skills: %v", err)
+	}
+	if len(skillsReg.Skills) != 2 {
+		t.Fatalf("expected 2 skill entries, got %d", len(skillsReg.Skills))
+	}
+
+	agentsReg, err := LoadRegistry(agentsDir)
+	if err != nil {
+		t.Fatalf("LoadRegistry agents: %v", err)
+	}
+	if len(agentsReg.Skills) != 1 {
+		t.Fatalf("expected 1 agent entry, got %d", len(agentsReg.Skills))
+	}
+	if agentsReg.Skills[0].Name != "agent-b" {
+		t.Errorf("agent name = %q, want %q", agentsReg.Skills[0].Name, "agent-b")
+	}
+}
+
+func TestSaveSplitByKind_NoAgents_SkipsAgentFile(t *testing.T) {
+	skillsDir := t.TempDir()
+	agentsDir := t.TempDir()
+
+	unified := &Registry{
+		Skills: []SkillEntry{
+			{Name: "only-skill", Source: "s1"},
+		},
+	}
+
+	if err := unified.SaveSplitByKind(skillsDir, agentsDir); err != nil {
+		t.Fatalf("SaveSplitByKind: %v", err)
+	}
+
+	// Agents dir should not have registry file
+	if _, err := os.Stat(filepath.Join(agentsDir, "registry.yaml")); err == nil {
+		t.Error("expected no agents registry.yaml when no agent entries")
+	}
+}
+
 func TestSourceRoot_NoGit(t *testing.T) {
 	dir := t.TempDir()
 	got := SourceRoot(dir)

@@ -6,6 +6,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -58,6 +59,96 @@ func TestHandleAuditAll_WithSkills(t *testing.T) {
 	}
 	if resp.Summary.Total != 1 {
 		t.Errorf("expected summary total 1, got %d", resp.Summary.Total)
+	}
+}
+
+func TestHandleAuditAll_IgnoresTopLevelDirsWithoutSkillDefinition(t *testing.T) {
+	s, src := newTestServer(t)
+
+	repoDir := filepath.Join(src, "_vijaythecoder-awesome-claude-agents")
+	if err := os.MkdirAll(filepath.Join(repoDir, "agents", "core"), 0o755); err != nil {
+		t.Fatalf("failed to create repo dir: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(repoDir, "agents", "core", "code-reviewer.md"), []byte("# code reviewer"), 0o644); err != nil {
+		t.Fatalf("failed to write nested agent file: %v", err)
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "/api/audit", nil)
+	rr := httptest.NewRecorder()
+	s.handler.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rr.Code, rr.Body.String())
+	}
+
+	var resp struct {
+		Results []any `json:"results"`
+		Summary struct {
+			Total int `json:"total"`
+		} `json:"summary"`
+	}
+	if err := json.Unmarshal(rr.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("failed to decode response: %v", err)
+	}
+	if len(resp.Results) != 0 {
+		t.Fatalf("expected 0 audited results, got %d", len(resp.Results))
+	}
+	if resp.Summary.Total != 0 {
+		t.Fatalf("expected summary total 0, got %d", resp.Summary.Total)
+	}
+}
+
+func TestHandleAuditAll_AgentsMissingSourceReturnsEmpty(t *testing.T) {
+	s, _ := newTestServer(t)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/audit?kind=agents", nil)
+	rr := httptest.NewRecorder()
+	s.handler.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rr.Code, rr.Body.String())
+	}
+
+	var resp struct {
+		Results []any `json:"results"`
+		Summary struct {
+			Total int `json:"total"`
+		} `json:"summary"`
+	}
+	if err := json.Unmarshal(rr.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("failed to decode response: %v", err)
+	}
+	if len(resp.Results) != 0 {
+		t.Fatalf("expected 0 agent audit results, got %d", len(resp.Results))
+	}
+	if resp.Summary.Total != 0 {
+		t.Fatalf("expected summary total 0, got %d", resp.Summary.Total)
+	}
+}
+
+func TestHandleAuditStream_AgentsMissingSourceReturnsEmpty(t *testing.T) {
+	s, _ := newTestServer(t)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/audit/stream?kind=agents", nil)
+	rr := httptest.NewRecorder()
+	s.handler.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rr.Code, rr.Body.String())
+	}
+
+	body := rr.Body.String()
+	if strings.Contains(body, "event: error") {
+		t.Fatalf("expected no error event, got: %s", body)
+	}
+	if !strings.Contains(body, "event: start") {
+		t.Fatalf("expected start event, got: %s", body)
+	}
+	if !strings.Contains(body, "\"total\":0") {
+		t.Fatalf("expected empty start payload, got: %s", body)
+	}
+	if !strings.Contains(body, "event: done") {
+		t.Fatalf("expected done event, got: %s", body)
 	}
 }
 

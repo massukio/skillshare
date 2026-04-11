@@ -13,8 +13,8 @@ import { TourProvider, TourOverlay, TourTooltip } from './components/tour';
 import DashboardPage from './pages/DashboardPage';
 import { BASE_PATH } from './lib/basePath';
 
-const SkillsPage = lazy(() => import('./pages/SkillsPage'));
-const SkillDetailPage = lazy(() => import('./pages/SkillDetailPage'));
+const ResourcesPage = lazy(() => import('./pages/ResourcesPage'));
+const ResourceDetailPage = lazy(() => import('./pages/ResourceDetailPage'));
 const TargetsPage = lazy(() => import('./pages/TargetsPage'));
 const ExtrasPage = lazy(() => import('./pages/ExtrasPage'));
 const SyncPage = lazy(() => import('./pages/SyncPage'));
@@ -53,10 +53,10 @@ export default function App() {
             <Routes>
               <Route element={<Layout />}>
                 <Route index element={<DashboardPage />} />
-                <Route path="skills" element={<Lazy><SkillsPage /></Lazy>} />
-                <Route path="skills/new" element={<Lazy><NewSkillPage /></Lazy>} />
+                <Route path="resources" element={<Lazy><ResourcesPage /></Lazy>} />
+                <Route path="resources/new" element={<Lazy><NewSkillPage /></Lazy>} />
+                <Route path="resources/:name" element={<Lazy><ResourceDetailPage /></Lazy>} />
                 <Route path="uninstall" element={<Lazy><BatchUninstallPage /></Lazy>} />
-                <Route path="skills/:name" element={<Lazy><SkillDetailPage /></Lazy>} />
                 <Route path="targets" element={<Lazy><TargetsPage /></Lazy>} />
                 <Route path="targets/:name/filters" element={<Lazy><FilterStudioPage /></Lazy>} />
                 <Route path="extras" element={<Lazy><ExtrasPage /></Lazy>} />

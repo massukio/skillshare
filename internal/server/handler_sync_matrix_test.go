@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -178,5 +179,116 @@ func TestHandleSyncMatrixPreview_MissingTarget(t *testing.T) {
 	s.handler.ServeHTTP(rr, req)
 	if rr.Code != http.StatusBadRequest {
 		t.Errorf("expected 400, got %d", rr.Code)
+	}
+}
+
+func TestHandleSyncMatrixPreview_IncludesAgents(t *testing.T) {
+	home := filepath.Join(t.TempDir(), "home")
+	os.MkdirAll(home, 0755)
+	t.Setenv("HOME", home)
+
+	tgtPath := filepath.Join(t.TempDir(), "claude-skills")
+	s, sourceDir := newTestServerWithTargets(t, map[string]string{"claude": tgtPath})
+	addSkill(t, sourceDir, "my-skill")
+
+	// Add agents to the agents source directory
+	agentsSource := s.cfg.EffectiveAgentsSource()
+	addAgentFile(t, agentsSource, "code-reviewer.md")
+	addAgentFile(t, agentsSource, "draft-helper.md")
+
+	body := `{"target":"claude","include":[],"exclude":[],"agent_include":[],"agent_exclude":["draft-*"]}`
+	req := httptest.NewRequest(http.MethodPost, "/api/sync-matrix/preview", strings.NewReader(body))
+	rr := httptest.NewRecorder()
+	s.handler.ServeHTTP(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rr.Code, rr.Body.String())
+	}
+
+	var resp struct {
+		Entries []struct {
+			Skill  string `json:"skill"`
+			Status string `json:"status"`
+			Kind   string `json:"kind"`
+		} `json:"entries"`
+	}
+	json.Unmarshal(rr.Body.Bytes(), &resp)
+
+	// Should have 1 skill + 2 agents = 3 entries
+	if len(resp.Entries) != 3 {
+		t.Fatalf("expected 3 entries, got %d", len(resp.Entries))
+	}
+
+	statusMap := map[string]string{}
+	kindMap := map[string]string{}
+	for _, e := range resp.Entries {
+		statusMap[e.Skill] = e.Status
+		kindMap[e.Skill] = e.Kind
+	}
+
+	// Skill should be synced
+	if statusMap["my-skill"] != "synced" {
+		t.Errorf("my-skill: expected synced, got %q", statusMap["my-skill"])
+	}
+	if kindMap["my-skill"] != "" {
+		t.Errorf("my-skill kind: expected empty, got %q", kindMap["my-skill"])
+	}
+
+	// code-reviewer agent should be synced
+	if statusMap["code-reviewer.md"] != "synced" {
+		t.Errorf("code-reviewer.md: expected synced, got %q", statusMap["code-reviewer.md"])
+	}
+	if kindMap["code-reviewer.md"] != "agent" {
+		t.Errorf("code-reviewer.md kind: expected agent, got %q", kindMap["code-reviewer.md"])
+	}
+
+	// draft-helper agent should be excluded
+	if statusMap["draft-helper.md"] != "excluded" {
+		t.Errorf("draft-helper.md: expected excluded, got %q", statusMap["draft-helper.md"])
+	}
+}
+
+func TestHandleSyncMatrixPreview_NoAgentsWhenNoAgentPath(t *testing.T) {
+	// custom-tool has no agent path in builtin targets
+	tgtPath := filepath.Join(t.TempDir(), "custom-skills")
+	s, sourceDir := newTestServerWithTargets(t, map[string]string{"custom-tool": tgtPath})
+	addSkill(t, sourceDir, "my-skill")
+
+	// Add agents to the agents source
+	agentsSource := s.cfg.EffectiveAgentsSource()
+	addAgentFile(t, agentsSource, "reviewer.md")
+
+	body := `{"target":"custom-tool","include":[],"exclude":[]}`
+	req := httptest.NewRequest(http.MethodPost, "/api/sync-matrix/preview", strings.NewReader(body))
+	rr := httptest.NewRecorder()
+	s.handler.ServeHTTP(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rr.Code, rr.Body.String())
+	}
+
+	var resp struct {
+		Entries []struct {
+			Skill string `json:"skill"`
+			Kind  string `json:"kind"`
+		} `json:"entries"`
+	}
+	json.Unmarshal(rr.Body.Bytes(), &resp)
+
+	// Should have only 1 skill, no agents
+	if len(resp.Entries) != 1 {
+		t.Fatalf("expected 1 entry (skill only, no agents), got %d", len(resp.Entries))
+	}
+	if resp.Entries[0].Kind == "agent" {
+		t.Error("expected no agent entries for target without agent path")
+	}
+}
+
+func TestHandleSyncMatrixPreview_InvalidAgentPattern(t *testing.T) {
+	s, _ := newTestServer(t)
+	body := `{"target":"claude","include":[],"exclude":[],"agent_include":["[unclosed"]}`
+	req := httptest.NewRequest(http.MethodPost, "/api/sync-matrix/preview", strings.NewReader(body))
+	rr := httptest.NewRecorder()
+	s.handler.ServeHTTP(rr, req)
+	if rr.Code != http.StatusBadRequest {
+		t.Errorf("expected 400 for invalid agent pattern, got %d", rr.Code)
 	}
 }

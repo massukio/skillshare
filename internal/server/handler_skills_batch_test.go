@@ -45,7 +45,7 @@ func TestHandleBatchSetTargets_SetSingleTarget(t *testing.T) {
 	addSkillNested(t, src, "frontend/skill-b")
 
 	body := `{"folder":"frontend","target":"claude"}`
-	req := httptest.NewRequest(http.MethodPost, "/api/skills/batch/targets", bytes.NewBufferString(body))
+	req := httptest.NewRequest(http.MethodPost, "/api/resources/batch/targets", bytes.NewBufferString(body))
 	rr := httptest.NewRecorder()
 	s.handler.ServeHTTP(rr, req)
 
@@ -84,7 +84,7 @@ func TestHandleBatchSetTargets_RemoveTargets(t *testing.T) {
 
 	// Set target="" to remove targets (root-level folder)
 	body := `{"folder":"","target":""}`
-	req := httptest.NewRequest(http.MethodPost, "/api/skills/batch/targets", bytes.NewBufferString(body))
+	req := httptest.NewRequest(http.MethodPost, "/api/resources/batch/targets", bytes.NewBufferString(body))
 	rr := httptest.NewRecorder()
 	s.handler.ServeHTTP(rr, req)
 
@@ -114,7 +114,7 @@ func TestHandleBatchSetTargets_PathTraversal(t *testing.T) {
 	s, _ := newTestServer(t)
 
 	body := `{"folder":"../../../etc","target":"claude"}`
-	req := httptest.NewRequest(http.MethodPost, "/api/skills/batch/targets", bytes.NewBufferString(body))
+	req := httptest.NewRequest(http.MethodPost, "/api/resources/batch/targets", bytes.NewBufferString(body))
 	rr := httptest.NewRecorder()
 	s.handler.ServeHTTP(rr, req)
 
@@ -132,7 +132,7 @@ func TestHandleBatchSetTargets_EmptyFolder_RootOnly(t *testing.T) {
 	addSkillNested(t, src, "nested-folder/deep-skill")
 
 	body := `{"folder":"","target":"cursor"}`
-	req := httptest.NewRequest(http.MethodPost, "/api/skills/batch/targets", bytes.NewBufferString(body))
+	req := httptest.NewRequest(http.MethodPost, "/api/resources/batch/targets", bytes.NewBufferString(body))
 	rr := httptest.NewRecorder()
 	s.handler.ServeHTTP(rr, req)
 
@@ -190,7 +190,7 @@ func TestHandleBatchSetTargets_FolderTrailingSlash(t *testing.T) {
 
 	// Trailing slash should still match (server cleans the input)
 	body := `{"folder":"frontend/","target":"claude"}`
-	req := httptest.NewRequest(http.MethodPost, "/api/skills/batch/targets", bytes.NewBufferString(body))
+	req := httptest.NewRequest(http.MethodPost, "/api/resources/batch/targets", bytes.NewBufferString(body))
 	rr := httptest.NewRecorder()
 	s.handler.ServeHTTP(rr, req)
 
@@ -214,7 +214,7 @@ func TestHandleSetSkillTargets_SetTarget(t *testing.T) {
 	addSkill(t, src, "my-skill")
 
 	body := `{"target":"claude"}`
-	req := httptest.NewRequest(http.MethodPatch, "/api/skills/my-skill/targets", bytes.NewBufferString(body))
+	req := httptest.NewRequest(http.MethodPatch, "/api/resources/my-skill/targets", bytes.NewBufferString(body))
 	req.SetPathValue("name", "my-skill")
 	rr := httptest.NewRecorder()
 	s.handleSetSkillTargets(rr, req)
@@ -244,7 +244,7 @@ func TestHandleSetSkillTargets_RemoveTarget(t *testing.T) {
 	addSkillWithTargets(t, src, "my-skill", []string{"claude", "cursor"})
 
 	body := `{"target":""}`
-	req := httptest.NewRequest(http.MethodPatch, "/api/skills/my-skill/targets", bytes.NewBufferString(body))
+	req := httptest.NewRequest(http.MethodPatch, "/api/resources/my-skill/targets", bytes.NewBufferString(body))
 	req.SetPathValue("name", "my-skill")
 	rr := httptest.NewRecorder()
 	s.handleSetSkillTargets(rr, req)
@@ -265,7 +265,7 @@ func TestHandleSetSkillTargets_NotFound(t *testing.T) {
 	s, _ := newTestServer(t)
 
 	body := `{"target":"claude"}`
-	req := httptest.NewRequest(http.MethodPatch, "/api/skills/nonexistent/targets", bytes.NewBufferString(body))
+	req := httptest.NewRequest(http.MethodPatch, "/api/resources/nonexistent/targets", bytes.NewBufferString(body))
 	req.SetPathValue("name", "nonexistent")
 	rr := httptest.NewRecorder()
 	s.handleSetSkillTargets(rr, req)

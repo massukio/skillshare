@@ -8,9 +8,11 @@ import { Input, Checkbox } from './Input';
 import SkillPickerModal from './SkillPickerModal';
 import ConfirmDialog from './ConfirmDialog';
 import { useToast } from './Toast';
-import { api, type InstallResult, type DiscoveredSkill } from '../api/client';
+import { api, type InstallResult, type DiscoveredSkill, type DiscoveredAgent } from '../api/client';
 import { queryKeys } from '../lib/queryKeys';
+import { clearAuditCache } from '../lib/auditCache';
 import { radius } from '../design';
+import { formatSkillDisplayName } from '../lib/resourceNames';
 
 interface InstallFormProps {
   /** Called after a successful install with the result */
@@ -109,7 +111,9 @@ export default function InstallForm({
 
   // Discovery flow state
   const [discoveredSkills, setDiscoveredSkills] = useState<DiscoveredSkill[]>([]);
+  const [discoveredAgents, setDiscoveredAgents] = useState<DiscoveredAgent[]>([]);
   const [showPicker, setShowPicker] = useState(false);
+  const [showKindSelector, setShowKindSelector] = useState(false);
   const [pendingSource, setPendingSource] = useState('');
   const [batchInstalling, setBatchInstalling] = useState(false);
 
@@ -140,6 +144,7 @@ export default function InstallForm({
   };
 
   const invalidateAfterInstall = () => {
+    clearAuditCache(queryClient);
     queryClient.invalidateQueries({ queryKey: queryKeys.skills.all });
     queryClient.invalidateQueries({ queryKey: queryKeys.overview });
   };
@@ -201,9 +206,13 @@ export default function InstallForm({
         });
         toast(res.summary, 'success');
         const allWarnings: string[] = [];
+        const allErrors: string[] = [];
         for (const item of res.results) {
-          if (item.error) toast(`${item.name}: ${item.error}`, 'error');
+          if (item.error) allErrors.push(`${formatSkillDisplayName(item.name)}: ${item.error}`);
           if (item.warnings?.length) allWarnings.push(...item.warnings.map((w) => `${item.name}: ${w}`));
+        }
+        if (allErrors.length > 0) {
+          toast(`${allErrors.length} failed: ${allErrors.join('; ')}`, 'error');
         }
         if (allWarnings.length > 0) setWarningDialog(allWarnings);
         resetForm();
@@ -259,13 +268,40 @@ export default function InstallForm({
     setInstalling(true);
     try {
       const disc = await api.discover(trimmed, branch.trim() || undefined);
+      const hasSkills = disc.skills.length > 0;
+      const hasAgents = (disc.agents?.length ?? 0) > 0;
+
+      // Mixed repo — kind-first selection
+      if (hasSkills && hasAgents) {
+        setDiscoveredSkills(disc.skills);
+        setDiscoveredAgents(disc.agents);
+        setPendingSource(trimmed);
+        setShowKindSelector(true);
+        setInstalling(false);
+        return;
+      }
+
+      // Pure agent repo — show agents as skills in picker
+      if (!hasSkills && hasAgents) {
+        const agentAsSkills: DiscoveredSkill[] = disc.agents.map((a) => ({
+          name: a.name,
+          path: a.path,
+          kind: 'agent' as const,
+        }));
+        setDiscoveredSkills(agentAsSkills);
+        setPendingSource(trimmed);
+        setShowPicker(true);
+        setInstalling(false);
+        return;
+      }
+
       if (disc.skills.length > 1) {
         // Multiple skills found — open picker
         setDiscoveredSkills(disc.skills);
         setPendingSource(trimmed);
         setShowPicker(true);
-      } else if (disc.skills.length === 1) {
-        // Single discovered skill — install via batch
+      } else if (disc.skills.length === 1 && !hasAgents) {
+        // Single discovered skill (no agents) — install via batch
         const res = await api.installBatch({
           source: trimmed,
           skills: disc.skills,
@@ -275,6 +311,7 @@ export default function InstallForm({
           branch: branch.trim() || undefined,
         });
         const allWarnings: string[] = [];
+        const allErrors: string[] = [];
         const auditFindings: string[] = [];
         const auditBlockedSkills: DiscoveredSkill[] = [];
         let installed = 0;
@@ -285,12 +322,15 @@ export default function InstallForm({
               const skill = disc.skills.find((s) => s.name === item.name);
               if (skill) auditBlockedSkills.push(skill);
             } else {
-              toast(`${item.name}: ${item.error}`, 'error');
+              allErrors.push(`${formatSkillDisplayName(item.name)}: ${item.error}`);
             }
           } else {
             installed++;
           }
           if (item.warnings?.length) allWarnings.push(...item.warnings.map((w) => `${item.name}: ${w}`));
+        }
+        if (allErrors.length > 0) {
+          toast(`${allErrors.length} failed: ${allErrors.join('; ')}`, 'error');
         }
         if (installed > 0) {
           const variant = auditBlockedSkills.length > 0 ? 'warning' : 'success';
@@ -328,6 +368,7 @@ export default function InstallForm({
   const handleBatchInstall = async (selected: DiscoveredSkill[]) => {
     setBatchInstalling(true);
     try {
+      const detectedKind = selected[0]?.kind;
       const res = await api.installBatch({
         source: pendingSource,
         skills: selected,
@@ -336,8 +377,10 @@ export default function InstallForm({
         skipAudit,
         name: selected.length === 1 && name.trim() ? name.trim() : undefined,
         branch: branch.trim() || undefined,
+        kind: detectedKind === 'agent' ? 'agent' : undefined,
       });
       const allWarnings: string[] = [];
+      const allErrors: string[] = [];
       const auditFindings: string[] = [];
       const auditBlockedSkills: DiscoveredSkill[] = [];
       let installed = 0;
@@ -348,12 +391,15 @@ export default function InstallForm({
             const skill = selected.find((s) => s.name === item.name);
             if (skill) auditBlockedSkills.push(skill);
           } else {
-            toast(`${item.name}: ${item.error}`, 'error');
+            allErrors.push(`${formatSkillDisplayName(item.name)}: ${item.error}`);
           }
         } else {
           installed++;
         }
         if (item.warnings?.length) allWarnings.push(...item.warnings.map((w) => `${item.name}: ${w}`));
+      }
+      if (allErrors.length > 0) {
+        toast(`${allErrors.length} failed: ${allErrors.join('; ')}`, 'error');
       }
 
       // Only show summary + close picker when at least one skill installed
@@ -443,7 +489,7 @@ export default function InstallForm({
               value={name}
               onChange={(e) => setName(e.target.value)}
             />
-            <p className="text-xs text-muted-dark mt-1">Only applies to single skill install</p>
+            <p className="text-xs text-muted-dark mt-1">Only applies to single resource install</p>
           </div>
           <Input
             label="Into directory"
@@ -474,7 +520,7 @@ export default function InstallForm({
             />
           </div>
           <p className="text-xs text-muted-dark mt-2">
-            Track keeps the git repo linked for updates · Force overwrites existing skills · Skip audit bypasses security scan
+            Track keeps the git repo linked for updates · Force overwrites existing resources · Skip audit bypasses security scan
           </p>
         </div>
 
@@ -502,6 +548,55 @@ export default function InstallForm({
       onCancel={() => setShowPicker(false)}
       installing={batchInstalling}
       singleSelect={!!name.trim()}
+    />
+  );
+
+  const kindSelectorDialog = (
+    <ConfirmDialog
+      open={showKindSelector}
+      title="Mixed Repository"
+      message={
+        <div className="text-left space-y-3">
+          <p className="text-pencil-light text-sm">
+            This repository contains both skills and agents. What would you like to install?
+          </p>
+          <div className="flex gap-3 justify-center">
+            <Button
+              variant="primary"
+              size="sm"
+              onClick={() => {
+                setShowKindSelector(false);
+                setDiscoveredSkills(discoveredSkills.map((s) => ({ ...s, kind: 'skill' as const })));
+                setShowPicker(true);
+              }}
+            >
+              <Package size={16} strokeWidth={2.5} />
+              Skills ({discoveredSkills.length})
+            </Button>
+            <Button
+              variant="secondary"
+              size="sm"
+              onClick={() => {
+                setShowKindSelector(false);
+                const agentAsSkills: DiscoveredSkill[] = discoveredAgents.map((a) => ({
+                  name: a.name,
+                  path: a.path,
+                  kind: 'agent' as const,
+                }));
+                setDiscoveredSkills(agentAsSkills);
+                setShowPicker(true);
+              }}
+            >
+              <Download size={16} strokeWidth={2.5} />
+              Agents ({discoveredAgents.length})
+            </Button>
+          </div>
+        </div>
+      }
+      confirmText=""
+      cancelText="Cancel"
+      onConfirm={() => setShowKindSelector(false)}
+      onCancel={() => setShowKindSelector(false)}
     />
   );
 
@@ -578,7 +673,7 @@ export default function InstallForm({
         <div className="text-left space-y-3">
           <div className="flex items-center gap-2 mb-4">
             <ShieldCheck size={20} className="text-warning" />
-            <span>Skill installed with audit warnings</span>
+            <span>Resource installed with audit warnings</span>
           </div>
           <div className="flex flex-wrap gap-1.5 items-center text-xs text-pencil-light">
             <span>{warningFindings.length} {warningFindings.length === 1 ? 'warning' : 'warnings'}:</span>
@@ -632,6 +727,7 @@ export default function InstallForm({
       <div className={className}>
         {formContent}
         {pickerModal}
+        {kindSelectorDialog}
         {auditConfirmDialog}
         {warningConfirmDialog}
       </div>

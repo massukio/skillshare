@@ -90,7 +90,9 @@ func setupUpdatableSkill(t *testing.T, sourceDir, name string) {
 	dir := filepath.Join(sourceDir, name)
 	os.MkdirAll(dir, 0755)
 	os.WriteFile(filepath.Join(dir, "SKILL.md"), []byte("# "+name), 0644)
-	install.WriteMeta(dir, &install.SkillMeta{Source: "github.com/test/" + name, Type: "github"})
+	store, _ := install.LoadMetadata(sourceDir)
+	store.Set(name, &install.MetadataEntry{Source: "github.com/test/" + name, Type: "github"})
+	store.Save(sourceDir)
 }
 
 func TestResolveByGlob_MatchesTrackedRepos(t *testing.T) {

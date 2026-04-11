@@ -1,4 +1,4 @@
-import { useParams, useNavigate, Link } from 'react-router-dom';
+import { useParams, useNavigate, Link, useSearchParams } from 'react-router-dom';
 import {
   ArrowLeft, Trash2, ExternalLink, FileText, ArrowUpRight, RefreshCw, Target,
   Type, AlignLeft, Files, Scale, Zap,
@@ -10,6 +10,8 @@ import remarkGfm from 'remark-gfm';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { queryKeys, staleTimes } from '../lib/queryKeys';
 import Badge from '../components/Badge';
+import KindBadge from '../components/KindBadge';
+import SourceBadge from '../components/SourceBadge';
 import Card from '../components/Card';
 import CopyButton from '../components/CopyButton';
 import Button from '../components/Button';
@@ -25,6 +27,8 @@ import { radius, shadows } from '../design';
 import { BlockStamp, RiskMeter } from '../components/audit';
 import { severityBadgeVariant } from '../lib/severity';
 import { useSyncMatrix } from '../hooks/useSyncMatrix';
+import { clearAuditCache } from '../lib/auditCache';
+import { formatSkillDisplayName, formatTrackedRepoName } from '../lib/resourceNames';
 
 const FileViewerModal = lazy(() => import('../components/FileViewerModal'));
 
@@ -95,12 +99,6 @@ function parseSkillMarkdown(content: string): { manifest: SkillManifest; markdow
   return { manifest, markdown };
 }
 
-function skillTypeLabel(type?: string): string | undefined {
-  if (!type) return undefined;
-  if (type === 'github-subdir') return 'github';
-  return type;
-}
-
 /** Returns a lucide icon component + color class for a filename */
 function getFileIcon(filename: string): { icon: typeof File; className: string } {
   if (filename === 'SKILL.md') return { icon: FileText, className: 'text-blue' };
@@ -154,11 +152,17 @@ function ContentStatsBar({ content, description, body, fileCount, license }: { c
 
 export default function SkillDetailPage() {
   const { name } = useParams<{ name: string }>();
+  const [searchParams] = useSearchParams();
   const navigate = useNavigate();
   const queryClient = useQueryClient();
+  const requestedKind = searchParams.get('kind') === 'agent'
+    ? 'agent'
+    : searchParams.get('kind') === 'skill'
+      ? 'skill'
+      : undefined;
   const { data, isPending, error } = useQuery({
-    queryKey: queryKeys.skills.detail(name!),
-    queryFn: () => api.getSkill(name!),
+    queryKey: [...queryKeys.skills.detail(name!), requestedKind],
+    queryFn: () => api.getResource(name!, requestedKind),
     staleTime: staleTimes.skills,
     enabled: !!name,
   });
@@ -167,11 +171,12 @@ export default function SkillDetailPage() {
     queryFn: () => api.listSkills(),
     staleTime: staleTimes.skills,
   });
+  const skillKind = data?.resource.kind;
   const auditQuery = useQuery({
-    queryKey: queryKeys.audit.skill(name!),
-    queryFn: () => api.auditSkill(name!),
+    queryKey: [...queryKeys.audit.skill(name!), skillKind],
+    queryFn: () => api.auditSkill(name!, skillKind),
     staleTime: staleTimes.auditSkill,
-    enabled: !!name,
+    enabled: !!name && !!skillKind,
   });
   const diffQuery = useQuery({
     queryKey: queryKeys.diff(),
@@ -188,7 +193,7 @@ export default function SkillDetailPage() {
 
   // Build lookup maps for skill cross-referencing
   const skillMaps = useMemo(() => {
-    const skills = allSkills.data?.skills ?? [];
+    const skills = allSkills.data?.resources ?? [];
     const byName = new Map<string, Skill>();
     const byFlat = new Map<string, Skill>();
     for (const s of skills) {
@@ -203,7 +208,7 @@ export default function SkillDetailPage() {
     return (
       <Card variant="accent" className="text-center py-8">
         <p className="text-danger text-lg">
-          Failed to load skill
+          Failed to load resource
         </p>
         <p className="text-pencil-light text-sm mt-1">{error.message}</p>
       </Card>
@@ -211,7 +216,7 @@ export default function SkillDetailPage() {
   }
   if (!data) return null;
 
-  const { skill, skillMdContent, files: rawFiles } = data;
+  const { resource, skillMdContent, files: rawFiles } = data;
   const files = rawFiles ?? [];
   const parsedDoc = parseSkillMarkdown(skillMdContent ?? '');
   const hasManifest = Boolean(parsedDoc.manifest.name || parsedDoc.manifest.description || parsedDoc.manifest.license);
@@ -222,7 +227,7 @@ export default function SkillDetailPage() {
     // Direct name match
     if (skillMaps.byName.has(ref)) return skillMaps.byName.get(ref);
     // Try as child: currentFlatName__ref (with / replaced by __)
-    const childFlat = `${skill.flatName}__${ref.replace(/\//g, '__')}`;
+    const childFlat = `${resource.flatName}__${ref.replace(/\//g, '__')}`;
     if (skillMaps.byFlat.has(childFlat)) return skillMaps.byFlat.get(childFlat);
     return undefined;
   }
@@ -231,7 +236,7 @@ export default function SkillDetailPage() {
   function resolveFileSkill(filePath: string): Skill | undefined {
     // Skip non-directory files (files with extensions)
     if (/\.[a-z]+$/i.test(filePath) && !filePath.endsWith('.md')) return undefined;
-    const flat = `${skill.flatName}__${filePath.replace(/\//g, '__')}`;
+    const flat = `${resource.flatName}__${filePath.replace(/\//g, '__')}`;
     return skillMaps.byFlat.get(flat);
   }
 
@@ -245,7 +250,7 @@ export default function SkillDetailPage() {
           if (resolved) {
             return (
               <Link
-                to={`/skills/${encodeURIComponent(resolved.flatName)}`}
+                to={`/resources/${encodeURIComponent(resolved.flatName)}`}
                 className="link-subtle inline-flex items-center gap-0.5"
               >
                 {children}
@@ -281,18 +286,19 @@ export default function SkillDetailPage() {
   const handleDelete = async () => {
     setDeleting(true);
     try {
-      if (skill.isInRepo) {
-        const repoName = skill.relPath.split('/')[0];
+      if (resource.isInRepo) {
+        const repoName = resource.relPath.split('/')[0];
         await api.deleteRepo(repoName);
-        toast(`Repository "${repoName}" uninstalled.`, 'success');
+        toast(`Repository "${formatTrackedRepoName(repoName)}" uninstalled.`, 'success');
       } else {
-        await api.deleteSkill(skill.flatName);
-        toast(`Skill "${skill.name}" uninstalled.`, 'success');
+        await api.deleteResource(resource.flatName, resource.kind);
+        toast(`${resource.kind === 'agent' ? 'Agent' : 'Skill'} "${resource.name}" uninstalled.`, 'success');
       }
+      clearAuditCache(queryClient);
       await queryClient.invalidateQueries({ queryKey: queryKeys.skills.all });
       await queryClient.invalidateQueries({ queryKey: queryKeys.overview });
       await queryClient.invalidateQueries({ queryKey: queryKeys.trash });
-      navigate('/skills');
+      navigate('/resources');
     } catch (e: unknown) {
       toast((e as Error).message, 'error');
       setDeleting(false);
@@ -304,19 +310,24 @@ export default function SkillDetailPage() {
     setUpdating(true);
     setBlockedMessage(null);
     try {
-      const skillName = skill.isInRepo ? skill.relPath.split('/')[0] : skill.relPath;
-      const res = await api.update({ name: skillName, skipAudit });
+      const resourceName = resource.isInRepo
+        ? resource.relPath.split('/')[0]
+        : resource.kind === 'agent'
+          ? resource.flatName
+          : resource.relPath;
+      const res = await api.update({ name: resourceName, kind: resource.kind, skipAudit });
       const item = res.results[0];
       if (item?.action === 'updated') {
         const auditInfo = item.auditRiskLabel
           ? ` · Security: ${item.auditRiskLabel.toUpperCase()}${item.auditRiskScore ? ` (${item.auditRiskScore}/100)` : ''}`
           : '';
-        toast(`Updated: ${item.name} — ${item.message}${auditInfo}`, 'success');
+        toast(`Updated: ${formatSkillDisplayName(item.name)} — ${item.message}${auditInfo}`, 'success');
+        clearAuditCache(queryClient);
         await queryClient.invalidateQueries({ queryKey: queryKeys.skills.detail(name!) });
         await queryClient.invalidateQueries({ queryKey: queryKeys.skills.all });
         await queryClient.invalidateQueries({ queryKey: queryKeys.overview });
       } else if (item?.action === 'up-to-date') {
-        toast(`${item.name} is already up to date.`, 'info');
+        toast(`${formatSkillDisplayName(item.name)} is already up to date.`, 'info');
       } else if (item?.action === 'blocked') {
         setBlockedMessage(item.message ?? 'Blocked by security audit — HIGH/CRITICAL findings detected');
       } else if (item?.action === 'error') {
@@ -334,12 +345,12 @@ export default function SkillDetailPage() {
   const handleToggleDisabled = async () => {
     setToggling(true);
     try {
-      if (skill.disabled) {
-        await api.enableSkill(skill.flatName);
-        toast(`Enabled: ${skill.name}`, 'success');
+      if (resource.disabled) {
+        await api.enableResource(resource.flatName, resource.kind);
+        toast(`Enabled: ${resource.name}`, 'success');
       } else {
-        await api.disableSkill(skill.flatName);
-        toast(`Disabled: ${skill.name}`, 'success');
+        await api.disableResource(resource.flatName, resource.kind);
+        toast(`Disabled: ${resource.name}`, 'success');
       }
       await queryClient.invalidateQueries({ queryKey: queryKeys.skills.detail(name!) });
       await queryClient.invalidateQueries({ queryKey: queryKeys.skills.all });
@@ -357,10 +368,10 @@ export default function SkillDetailPage() {
       <div className="flex items-center gap-3 mb-2 sticky top-0 z-20 bg-paper py-3 -mx-4 px-4 md:-mx-8 md:px-8 -mt-3">
         <IconButton
           icon={<ArrowLeft size={18} strokeWidth={2.5} />}
-          label="Back to skills"
+          label="Back to resources"
           size="lg"
           variant="outline"
-          onClick={() => navigate('/skills')}
+          onClick={() => navigate('/resources')}
           className="bg-surface"
           style={{ boxShadow: shadows.sm }}
         />
@@ -368,15 +379,15 @@ export default function SkillDetailPage() {
           <h2
             className="ss-detail-title text-2xl md:text-3xl font-bold text-pencil"
           >
-            {skill.name}
+            {resource.name}
           </h2>
-          {skill.disabled && <Badge variant="danger">disabled</Badge>}
-          {skill.isInRepo && <Badge variant="warning">tracked repo</Badge>}
-          {skillTypeLabel(skill.type) && <Badge variant="info">{skillTypeLabel(skill.type)}</Badge>}
-          {skill.targets && skill.targets.length > 0 && (
+          <KindBadge kind={resource.kind} />
+          {resource.disabled && <Badge variant="danger">Disabled</Badge>}
+          <SourceBadge type={resource.type} isInRepo={resource.isInRepo} />
+          {resource.targets && resource.targets.length > 0 && (
             <span className="inline-flex items-center gap-1">
               <Target size={13} strokeWidth={2.5} className="text-pencil-light" />
-              {skill.targets.map((t) => (
+              {resource.targets.map((t) => (
                 <Badge key={t} variant="default">{t}</Badge>
               ))}
             </span>
@@ -430,7 +441,7 @@ export default function SkillDetailPage() {
                 </Markdown>
               ) : (
                 <p className="text-pencil-light italic text-center py-8">
-                  No SKILL.md content available.
+                  No content available.
                 </p>
               )}
             </div>
@@ -446,38 +457,38 @@ export default function SkillDetailPage() {
               Metadata
             </h3>
             <dl className="space-y-2">
-              <MetaItem label="Path" value={skill.relPath} mono copyable copyValue={skill.sourcePath} />
-              {skill.source && <MetaItem label="Source" value={skill.source} mono />}
-              {skill.version && <MetaItem label="Version" value={skill.version} mono />}
-              {skill.branch && <MetaItem label="Branch" value={skill.branch} mono />}
-              {skill.installedAt && (
+              <MetaItem label="Path" value={resource.relPath} mono copyable copyValue={resource.sourcePath} />
+              {resource.source && <MetaItem label="Source" value={resource.source} mono />}
+              {resource.version && <MetaItem label="Version" value={resource.version} mono />}
+              {resource.branch && <MetaItem label="Branch" value={resource.branch} mono />}
+              {resource.installedAt && (
                 <MetaItem
                   label="Installed"
-                  value={new Date(skill.installedAt).toLocaleDateString()}
+                  value={new Date(resource.installedAt).toLocaleDateString()}
                 />
               )}
-              {skill.targets && skill.targets.length > 0 && (
+              {resource.targets && resource.targets.length > 0 && (
                 <div className="flex items-baseline gap-3">
                   <dt className="text-xs text-pencil-light uppercase tracking-wider shrink-0 min-w-[4.5rem]">Targets</dt>
                   <dd className="flex flex-wrap gap-1.5 min-w-0">
-                    {skill.targets.map((t) => (
+                    {resource.targets.map((t) => (
                       <Badge key={t} variant="default">{t}</Badge>
                     ))}
                   </dd>
                 </div>
               )}
-              {skill.repoUrl && (
+              {resource.repoUrl && (
                 <div className="flex items-baseline gap-3">
                   <dt className="text-xs text-pencil-light uppercase tracking-wider shrink-0 min-w-[4.5rem]">Repo</dt>
                   <dd className="min-w-0">
                     <a
-                      href={skill.repoUrl}
+                      href={resource.repoUrl}
                       target="_blank"
                       rel="noopener noreferrer"
                       className="link-subtle text-sm break-all"
                     >
                       <ExternalLink size={11} strokeWidth={2.5} className="inline -mt-0.5 mr-0.5" />
-                      {skill.repoUrl.replace('https://', '').replace('.git', '')}
+                      {resource.repoUrl.replace('https://', '').replace('.git', '')}
                     </a>
                   </dd>
                 </div>
@@ -490,22 +501,22 @@ export default function SkillDetailPage() {
                 <Button
                   onClick={handleToggleDisabled}
                   disabled={toggling}
-                  variant={skill.disabled ? 'primary' : 'secondary'}
+                  variant={resource.disabled ? 'primary' : 'secondary'}
                   size="sm"
                   className="flex-1"
                 >
                   {toggling ? (
                     <Spinner size="sm" />
-                  ) : skill.disabled ? (
+                  ) : resource.disabled ? (
                     <Eye size={14} strokeWidth={2.5} />
                   ) : (
                     <EyeOff size={14} strokeWidth={2.5} />
                   )}
                   {toggling
-                    ? (skill.disabled ? 'Enabling...' : 'Disabling...')
-                    : (skill.disabled ? 'Enable' : 'Disable')}
+                    ? (resource.disabled ? 'Enabling...' : 'Disabling...')
+                    : (resource.disabled ? 'Enable' : 'Disable')}
                 </Button>
-                {(skill.isInRepo || skill.source) && (
+                {(resource.isInRepo || resource.source) && (
                   <Button
                     onClick={() => handleUpdate()}
                     disabled={updating}
@@ -527,14 +538,14 @@ export default function SkillDetailPage() {
                 <Trash2 size={12} strokeWidth={2.5} />
                 {deleting
                   ? 'Uninstalling...'
-                  : skill.isInRepo
+                  : resource.isInRepo
                     ? 'Uninstall Repo'
                     : 'Uninstall'}
               </Button>
             </div>
           </Card>
 
-          <Card className="ss-detail-pinned" overflow>
+          {resource.kind !== 'agent' && <Card className="ss-detail-pinned" overflow>
             <h3
               className="ss-detail-heading font-bold text-pencil mb-3 flex items-center gap-2"
             >
@@ -555,7 +566,7 @@ export default function SkillDetailPage() {
                       <FileIcon size={14} strokeWidth={2} className={`shrink-0 ${iconClass}`} />
                       {linkedSkill ? (
                         <Link
-                          to={`/skills/${encodeURIComponent(linkedSkill.flatName)}`}
+                          to={`/resources/${encodeURIComponent(linkedSkill.flatName)}`}
                           className="font-mono link-subtle inline-flex items-center gap-1"
                           style={{ fontSize: '0.8125rem' }}
                           title={`View skill: ${linkedSkill.name}`}
@@ -587,16 +598,16 @@ export default function SkillDetailPage() {
             ) : (
               <p className="text-sm text-muted-dark italic">No files.</p>
             )}
-          </Card>
+          </Card>}
 
           {/* Security Audit */}
           <SecurityAuditCard auditQuery={auditQuery} />
 
           {/* Target Distribution */}
-          <TargetDistribution flatName={skill.flatName} />
+          <TargetDistribution flatName={resource.flatName} kind={resource.kind} />
 
           {/* Target Sync Status */}
-          <SyncStatusCard diffQuery={diffQuery} skillFlatName={skill.flatName} />
+          <SyncStatusCard diffQuery={diffQuery} skillFlatName={resource.flatName} />
         </div>
       </div>
 
@@ -604,9 +615,9 @@ export default function SkillDetailPage() {
       {viewingFile && (
         <Suspense fallback={null}>
           <FileViewerModal
-            skillName={skill.flatName}
+            skillName={resource.flatName}
             filepath={viewingFile}
-            sourcePath={skill.sourcePath}
+            sourcePath={resource.sourcePath}
             onClose={() => setViewingFile(null)}
           />
         </Suspense>
@@ -635,11 +646,11 @@ export default function SkillDetailPage() {
       {/* Confirm uninstall dialog */}
       <ConfirmDialog
         open={confirmDelete}
-        title={skill.isInRepo ? 'Uninstall Repository' : 'Uninstall Skill'}
+        title={resource.isInRepo ? 'Uninstall Repository' : `Uninstall ${resource.kind === 'agent' ? 'Agent' : 'Skill'}`}
         message={
-          skill.isInRepo
-            ? `Remove repository "${skill.relPath.split('/')[0]}"? This will move all skills in the repo to trash.`
-            : `Uninstall skill "${skill.name}"? It will be moved to trash and can be restored within 7 days.`
+          resource.isInRepo
+            ? `Remove repository "${resource.relPath.split('/')[0]}"? This will move all skills in the repo to trash.`
+            : `Uninstall ${resource.kind === 'agent' ? 'agent' : 'skill'} "${resource.name}"? It will be moved to trash and can be restored within 7 days.`
         }
         confirmText="Uninstall"
         variant="danger"
@@ -760,7 +771,7 @@ function sevOrder(sev: string): number {
 }
 
 /** Target Distribution sidebar card */
-function TargetDistribution({ flatName }: { flatName: string }) {
+function TargetDistribution({ flatName, kind }: { flatName: string; kind: 'skill' | 'agent' }) {
   const { getSkillTargets } = useSyncMatrix();
   const entries = getSkillTargets(flatName);
 
@@ -780,7 +791,7 @@ function TargetDistribution({ flatName }: { flatName: string }) {
                 e.status === 'synced' ? 'bg-success' :
                 e.status === 'na' ? 'bg-muted' : 'bg-danger'
               }`} />
-              <Link to={`/targets/${encodeURIComponent(e.target)}/filters`}
+              <Link to={`/targets/${encodeURIComponent(e.target)}/filters?kind=${kind}`}
                     className="font-bold text-pencil hover:text-blue truncate">
                 {e.target}
               </Link>

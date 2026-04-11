@@ -162,8 +162,21 @@ skillshare check -p --group frontend   # Check project group
 skillshare check -p --json             # JSON output for project
 ```
 
+## Agent Support
+
+`skillshare check agents` scopes the check to agents only, reporting drift and update status for `.md` files in the agents source directory:
+
+```bash
+skillshare check agents              # Check all agents
+skillshare check agents --json       # JSON output for agents
+skillshare check agents -p           # Check project agents
+```
+
+Without the `agents` argument, `check` operates on skills only (default behavior). See [Agents](/docs/understand/agents) for background.
+
 ## See Also
 
 - [update](/docs/reference/commands/update) — Apply updates
 - [list](/docs/reference/commands/list) — View installed skills
 - [status](/docs/reference/commands/status) — Show sync status
+- [Agents](/docs/understand/agents) — Agent concepts

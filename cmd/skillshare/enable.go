@@ -33,6 +33,12 @@ func cmdToggleSkill(args []string, enable bool) error {
 		return err
 	}
 
+	// Extract --kind flag before parsing other args
+	kind, rest, err := parseKindFlag(rest)
+	if err != nil {
+		return err
+	}
+
 	var dryRun bool
 	var patterns []string
 	for _, arg := range rest {
@@ -68,18 +74,33 @@ func cmdToggleSkill(args []string, enable bool) error {
 	}
 	applyModeLabel(mode)
 
+	isAgent := kind == kindAgents
+
 	var ignorePath string
 	var cfgPath string
 	if mode == modeProject {
-		ignorePath = filepath.Join(cwd, ".skillshare", "skills", ".skillignore")
+		if isAgent {
+			ignorePath = filepath.Join(cwd, ".skillshare", "agents", ".agentignore")
+		} else {
+			ignorePath = filepath.Join(cwd, ".skillshare", "skills", ".skillignore")
+		}
 		cfgPath = config.ProjectConfigPath(cwd)
 	} else {
 		cfg, err := config.Load()
 		if err != nil {
 			return fmt.Errorf("failed to load config: %w", err)
 		}
-		ignorePath = filepath.Join(cfg.Source, ".skillignore")
+		if isAgent {
+			ignorePath = filepath.Join(cfg.EffectiveAgentsSource(), ".agentignore")
+		} else {
+			ignorePath = filepath.Join(cfg.Source, ".skillignore")
+		}
 		cfgPath = config.ConfigPath()
+	}
+
+	ignoreLabel := ".skillignore"
+	if isAgent {
+		ignoreLabel = ".agentignore"
 	}
 
 	changed := false
@@ -96,25 +117,25 @@ func cmdToggleSkill(args []string, enable bool) error {
 		if enable {
 			removed, err := skillignore.RemovePattern(ignorePath, pattern)
 			if err != nil {
-				return fmt.Errorf("failed to update .skillignore: %w", err)
+				return fmt.Errorf("failed to update %s: %w", ignoreLabel, err)
 			}
 			if !removed {
 				ui.Warning("%s is not disabled", pattern)
 				continue
 			}
 			changed = true
-			ui.Success("Enabled: %s (removed from .skillignore)", pattern)
+			ui.Success("Enabled: %s (removed from %s)", pattern, ignoreLabel)
 		} else {
 			added, err := skillignore.AddPattern(ignorePath, pattern)
 			if err != nil {
-				return fmt.Errorf("failed to update .skillignore: %w", err)
+				return fmt.Errorf("failed to update %s: %w", ignoreLabel, err)
 			}
 			if !added {
 				ui.Warning("%s is already disabled", pattern)
 				continue
 			}
 			changed = true
-			ui.Success("Disabled: %s (added to .skillignore)", pattern)
+			ui.Success("Disabled: %s (added to %s)", pattern, ignoreLabel)
 		}
 	}
 
@@ -124,6 +145,7 @@ func cmdToggleSkill(args []string, enable bool) error {
 		e := oplog.NewEntry(action, "ok", time.Since(start))
 		e.Args = map[string]any{
 			"patterns": patterns,
+			"kind":     kind.String(),
 		}
 		oplog.Write(cfgPath, oplog.OpsFile, e)
 	}

@@ -2,11 +2,14 @@ package main
 
 import (
 	"fmt"
+	"path/filepath"
 	"sort"
 	"strings"
 
 	"skillshare/internal/config"
 	"skillshare/internal/sync"
+	"skillshare/internal/targetsummary"
+	"skillshare/internal/theme"
 
 	"github.com/charmbracelet/bubbles/list"
 	"github.com/charmbracelet/bubbles/spinner"
@@ -59,6 +62,7 @@ type targetListTUIModel struct {
 	// Mode picker overlay
 	showModePicker   bool
 	modePickerTarget string // target name being edited
+	modePickerScope  string // "skills" or "agents"
 	modeCursor       int
 
 	// Naming picker overlay
@@ -70,6 +74,7 @@ type targetListTUIModel struct {
 	editingFilter    bool   // true when in I/E edit mode
 	editFilterType   string // "include" or "exclude"
 	editFilterTarget string // target name being edited
+	editFilterScope  string // "skills" or "agents"
 	editPatterns     []string
 	editCursor       int // selected pattern index
 	editAdding       bool
@@ -79,11 +84,23 @@ type targetListTUIModel struct {
 	confirming    bool
 	confirmTarget string
 
+	// Scope picker overlay for M/I/E when both skills and agents are available.
+	showScopePicker   bool
+	scopePickerTarget string
+	scopePickerAction string // "mode", "include", "exclude"
+	scopePickerCursor int
+
 	// Exit-with-action (for destructive ops dispatched after TUI exit)
 	action string // "remove" or "" (normal quit)
 
 	// Action feedback
 	lastActionMsg string
+}
+
+type targetScopeOption struct {
+	scope    string
+	enabled  bool
+	disabled string
 }
 
 func newTargetListTUIModel(
@@ -96,7 +113,7 @@ func newTargetListTUIModel(
 
 	l := list.New(nil, delegate, 0, 0)
 	l.Title = fmt.Sprintf("Targets (%s)", modeLabel)
-	l.Styles.Title = tc.ListTitle
+	l.Styles.Title = theme.Title()
 	l.SetShowStatusBar(false)
 	l.SetFilteringEnabled(false)
 	l.SetShowHelp(false)
@@ -104,18 +121,18 @@ func newTargetListTUIModel(
 
 	sp := spinner.New()
 	sp.Spinner = spinner.Dot
-	sp.Style = tc.SpinnerStyle
+	sp.Style = theme.Accent()
 
 	fi := textinput.New()
 	fi.Prompt = "/ "
-	fi.PromptStyle = tc.Filter
-	fi.Cursor.Style = tc.Filter
+	fi.PromptStyle = theme.Accent()
+	fi.Cursor.Style = theme.Accent()
 	fi.Placeholder = "filter by name"
 
 	ei := textinput.New()
 	ei.Prompt = "> pattern: "
-	ei.PromptStyle = tc.Cyan
-	ei.Cursor.Style = tc.Cyan
+	ei.PromptStyle = theme.Accent()
+	ei.Cursor.Style = theme.Accent()
 	ei.Placeholder = "glob pattern"
 
 	return targetListTUIModel{
@@ -152,18 +169,30 @@ func buildTargetTUIItems(isProject bool, cwd string) ([]targetTUIItem, error) {
 		if err != nil {
 			return nil, err
 		}
+		resolvedTargets, err := config.ResolveProjectTargets(cwd, projCfg)
+		if err != nil {
+			return nil, err
+		}
+		agentBuilder, err := targetsummary.NewProjectBuilder(cwd)
+		if err != nil {
+			return nil, err
+		}
 		for _, entry := range projCfg.Targets {
-			sc := entry.SkillsConfig()
+			resolved, ok := resolvedTargets[entry.Name]
+			if !ok {
+				continue
+			}
+			agentSummary, err := agentBuilder.ProjectTarget(entry)
+			if err != nil {
+				return nil, err
+			}
 			items = append(items, targetTUIItem{
-				name: entry.Name,
-				target: config.TargetConfig{
-					Skills: &config.ResourceTargetConfig{
-						Path:    projectTargetDisplayPath(entry),
-						Mode:    sc.Mode,
-						Include: sc.Include,
-						Exclude: sc.Exclude,
-					},
-				},
+				name:         entry.Name,
+				target:       resolved,
+				displayPath:  projectTargetDisplayPath(entry),
+				skillSync:    buildTargetSkillSyncSummary(resolved.SkillsConfig().Path, filepath.Join(cwd, ".skillshare", "skills"), resolved.SkillsConfig().Mode),
+				agentConfig:  config.ResourceTargetConfig{Mode: agentSummaryMode(agentSummary), Include: agentSummaryInclude(agentSummary), Exclude: agentSummaryExclude(agentSummary)},
+				agentSummary: agentSummary,
 			})
 		}
 	} else {
@@ -171,8 +200,23 @@ func buildTargetTUIItems(isProject bool, cwd string) ([]targetTUIItem, error) {
 		if err != nil {
 			return nil, err
 		}
+		agentBuilder, err := targetsummary.NewGlobalBuilder(cfg)
+		if err != nil {
+			return nil, err
+		}
 		for name, t := range cfg.Targets {
-			items = append(items, targetTUIItem{name: name, target: t})
+			agentSummary, err := agentBuilder.GlobalTarget(name, t)
+			if err != nil {
+				return nil, err
+			}
+			items = append(items, targetTUIItem{
+				name:         name,
+				target:       t,
+				displayPath:  t.SkillsConfig().Path,
+				skillSync:    buildTargetSkillSyncSummary(t.SkillsConfig().Path, cfg.Source, t.SkillsConfig().Mode),
+				agentConfig:  config.ResourceTargetConfig{Mode: agentSummaryMode(agentSummary), Include: agentSummaryInclude(agentSummary), Exclude: agentSummaryExclude(agentSummary)},
+				agentSummary: agentSummary,
+			})
 		}
 	}
 	sort.Slice(items, func(i, j int) bool {
@@ -241,6 +285,9 @@ func (m targetListTUIModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if m.showModePicker {
 			return m.handleModePickerKey(msg)
 		}
+		if m.showScopePicker {
+			return m.handleScopePickerKey(msg)
+		}
 		if m.showNamingPicker {
 			return m.handleNamingPickerKey(msg)
 		}
@@ -303,6 +350,9 @@ func (m targetListTUIModel) handleNormalKey(msg tea.KeyMsg) (tea.Model, tea.Cmd)
 		return m, textinput.Blink
 	case "M":
 		if item, ok := m.list.SelectedItem().(targetTUIItem); ok {
+			if item.agentSummary != nil {
+				return m.openScopePicker(item, "mode")
+			}
 			return m.openModePicker(item.name, item.target)
 		}
 		return m, nil
@@ -313,11 +363,17 @@ func (m targetListTUIModel) handleNormalKey(msg tea.KeyMsg) (tea.Model, tea.Cmd)
 		return m, nil
 	case "I":
 		if item, ok := m.list.SelectedItem().(targetTUIItem); ok {
+			if item.agentSummary != nil {
+				return m.openScopePicker(item, "include")
+			}
 			return m.openFilterEdit(item.name, "include", item.target.SkillsConfig().Include)
 		}
 		return m, nil
 	case "E":
 		if item, ok := m.list.SelectedItem().(targetTUIItem); ok {
+			if item.agentSummary != nil {
+				return m.openScopePicker(item, "exclude")
+			}
 			return m.openFilterEdit(item.name, "exclude", item.target.SkillsConfig().Exclude)
 		}
 		return m, nil
@@ -412,10 +468,15 @@ func (m targetListTUIModel) handleConfirmKey(msg tea.KeyMsg) (tea.Model, tea.Cmd
 var targetSyncModes = config.ExtraSyncModes // ["merge", "copy", "symlink"]
 
 func (m targetListTUIModel) openModePicker(name string, target config.TargetConfig) (tea.Model, tea.Cmd) {
+	return m.openModePickerForScope(name, target.SkillsConfig(), "skills")
+}
+
+func (m targetListTUIModel) openModePickerForScope(name string, currentConfig config.ResourceTargetConfig, scope string) (tea.Model, tea.Cmd) {
 	m.showModePicker = true
 	m.modePickerTarget = name
+	m.modePickerScope = scope
 	m.modeCursor = 0
-	current := sync.EffectiveMode(target.SkillsConfig().Mode)
+	current := sync.EffectiveMode(currentConfig.Mode)
 	for i, mode := range targetSyncModes {
 		if mode == current {
 			m.modeCursor = i
@@ -445,15 +506,16 @@ func (m targetListTUIModel) handleModePickerKey(msg tea.KeyMsg) (tea.Model, tea.
 		m.showModePicker = false
 		newMode := targetSyncModes[m.modeCursor]
 		name := m.modePickerTarget
+		scope := m.modePickerScope
 		return m, func() tea.Msg {
-			msg, err := m.doSetTargetMode(name, newMode)
+			msg, err := m.doSetTargetMode(name, scope, newMode)
 			return targetListActionDoneMsg{msg: msg, err: err}
 		}
 	}
 	return m, nil
 }
 
-func (m targetListTUIModel) doSetTargetMode(name, newMode string) (string, error) {
+func (m targetListTUIModel) doSetTargetMode(name, scope, newMode string) (string, error) {
 	if m.projCfg != nil {
 		projCfg, err := config.LoadProject(m.cwd)
 		if err != nil {
@@ -461,7 +523,8 @@ func (m targetListTUIModel) doSetTargetMode(name, newMode string) (string, error
 		}
 		for i, entry := range projCfg.Targets {
 			if entry.Name == name {
-				projCfg.Targets[i].EnsureSkills().Mode = newMode
+				targetCfg := scopeSetterProject(&projCfg.Targets[i], scope)
+				targetCfg.Mode = newMode
 				break
 			}
 		}
@@ -474,13 +537,14 @@ func (m targetListTUIModel) doSetTargetMode(name, newMode string) (string, error
 			return "", err
 		}
 		t := cfg.Targets[name]
-		t.EnsureSkills().Mode = newMode
+		targetCfg := scopeSetterGlobal(&t, scope)
+		targetCfg.Mode = newMode
 		cfg.Targets[name] = t
 		if err := cfg.Save(); err != nil {
 			return "", err
 		}
 	}
-	return fmt.Sprintf("✓ Set %s mode to %s", name, newMode), nil
+	return fmt.Sprintf("✓ Set %s %s mode to %s", name, scope, newMode), nil
 }
 
 // ─── Naming Picker ──────────────────────────────────────────────────
@@ -560,9 +624,14 @@ func (m targetListTUIModel) doSetTargetNaming(name, newNaming string) (string, e
 // ─── Include/Exclude Edit Sub-Panel ──────────────────────────────────
 
 func (m targetListTUIModel) openFilterEdit(name, filterType string, patterns []string) (tea.Model, tea.Cmd) {
+	return m.openFilterEditForScope(name, "skills", filterType, patterns)
+}
+
+func (m targetListTUIModel) openFilterEditForScope(name, scope, filterType string, patterns []string) (tea.Model, tea.Cmd) {
 	m.editingFilter = true
 	m.editFilterType = filterType
 	m.editFilterTarget = name
+	m.editFilterScope = scope
 	m.editPatterns = make([]string, len(patterns))
 	copy(m.editPatterns, patterns)
 	m.editCursor = 0
@@ -604,9 +673,10 @@ func (m targetListTUIModel) handleFilterEditKey(msg tea.KeyMsg) (tea.Model, tea.
 				m.editCursor--
 			}
 			name := m.editFilterTarget
+			scope := m.editFilterScope
 			filterType := m.editFilterType
 			return m, func() tea.Msg {
-				msg, err := m.doRemovePattern(name, filterType, pattern)
+				msg, err := m.doRemovePattern(name, scope, filterType, pattern)
 				return targetListActionDoneMsg{msg: msg, err: err}
 			}
 		}
@@ -631,9 +701,10 @@ func (m targetListTUIModel) handleFilterEditAddKey(msg tea.KeyMsg) (tea.Model, t
 		m.editPatterns = append(m.editPatterns, pattern)
 		m.editCursor = len(m.editPatterns) - 1
 		name := m.editFilterTarget
+		scope := m.editFilterScope
 		filterType := m.editFilterType
 		return m, func() tea.Msg {
-			msg, err := m.doAddPattern(name, filterType, pattern)
+			msg, err := m.doAddPattern(name, scope, filterType, pattern)
 			return targetListActionDoneMsg{msg: msg, err: err}
 		}
 	}
@@ -642,7 +713,7 @@ func (m targetListTUIModel) handleFilterEditAddKey(msg tea.KeyMsg) (tea.Model, t
 	return m, cmd
 }
 
-func (m targetListTUIModel) doAddPattern(name, filterType, pattern string) (string, error) {
+func (m targetListTUIModel) doAddPattern(name, scope, filterType, pattern string) (string, error) {
 	if m.projCfg != nil {
 		projCfg, err := config.LoadProject(m.cwd)
 		if err != nil {
@@ -650,11 +721,11 @@ func (m targetListTUIModel) doAddPattern(name, filterType, pattern string) (stri
 		}
 		for i, entry := range projCfg.Targets {
 			if entry.Name == name {
-				sk := projCfg.Targets[i].EnsureSkills()
+				targetCfg := scopeSetterProject(&projCfg.Targets[i], scope)
 				if filterType == "include" {
-					sk.Include = append(sk.Include, pattern)
+					targetCfg.Include = append(targetCfg.Include, pattern)
 				} else {
-					sk.Exclude = append(sk.Exclude, pattern)
+					targetCfg.Exclude = append(targetCfg.Exclude, pattern)
 				}
 				break
 			}
@@ -668,21 +739,21 @@ func (m targetListTUIModel) doAddPattern(name, filterType, pattern string) (stri
 			return "", err
 		}
 		t := cfg.Targets[name]
-		sk := t.EnsureSkills()
+		targetCfg := scopeSetterGlobal(&t, scope)
 		if filterType == "include" {
-			sk.Include = append(sk.Include, pattern)
+			targetCfg.Include = append(targetCfg.Include, pattern)
 		} else {
-			sk.Exclude = append(sk.Exclude, pattern)
+			targetCfg.Exclude = append(targetCfg.Exclude, pattern)
 		}
 		cfg.Targets[name] = t
 		if err := cfg.Save(); err != nil {
 			return "", err
 		}
 	}
-	return fmt.Sprintf("✓ Added %s pattern: %s", filterType, pattern), nil
+	return fmt.Sprintf("✓ Added %s %s pattern: %s", scope, filterType, pattern), nil
 }
 
-func (m targetListTUIModel) doRemovePattern(name, filterType, pattern string) (string, error) {
+func (m targetListTUIModel) doRemovePattern(name, scope, filterType, pattern string) (string, error) {
 	removeFromSlice := func(slice []string, val string) []string {
 		var result []string
 		for _, s := range slice {
@@ -700,11 +771,11 @@ func (m targetListTUIModel) doRemovePattern(name, filterType, pattern string) (s
 		}
 		for i, entry := range projCfg.Targets {
 			if entry.Name == name {
-				sk := projCfg.Targets[i].EnsureSkills()
+				targetCfg := scopeSetterProject(&projCfg.Targets[i], scope)
 				if filterType == "include" {
-					sk.Include = removeFromSlice(sk.Include, pattern)
+					targetCfg.Include = removeFromSlice(targetCfg.Include, pattern)
 				} else {
-					sk.Exclude = removeFromSlice(sk.Exclude, pattern)
+					targetCfg.Exclude = removeFromSlice(targetCfg.Exclude, pattern)
 				}
 				break
 			}
@@ -718,18 +789,18 @@ func (m targetListTUIModel) doRemovePattern(name, filterType, pattern string) (s
 			return "", err
 		}
 		t := cfg.Targets[name]
-		sk := t.EnsureSkills()
+		targetCfg := scopeSetterGlobal(&t, scope)
 		if filterType == "include" {
-			sk.Include = removeFromSlice(sk.Include, pattern)
+			targetCfg.Include = removeFromSlice(targetCfg.Include, pattern)
 		} else {
-			sk.Exclude = removeFromSlice(sk.Exclude, pattern)
+			targetCfg.Exclude = removeFromSlice(targetCfg.Exclude, pattern)
 		}
 		cfg.Targets[name] = t
 		if err := cfg.Save(); err != nil {
 			return "", err
 		}
 	}
-	return fmt.Sprintf("✓ Removed %s pattern: %s", filterType, pattern), nil
+	return fmt.Sprintf("✓ Removed %s %s pattern: %s", scope, filterType, pattern), nil
 }
 
 // ---- View -------------------------------------------------------------------
@@ -746,6 +817,9 @@ func (m targetListTUIModel) View() string {
 	}
 	if m.showModePicker {
 		return m.renderModePicker()
+	}
+	if m.showScopePicker {
+		return m.renderScopePicker()
 	}
 	if m.showNamingPicker {
 		return m.renderNamingPicker()
@@ -822,20 +896,20 @@ func (m targetListTUIModel) viewTargetVertical() string {
 
 func renderTargetActionMsg(msg string) string {
 	if strings.HasPrefix(msg, "✓") {
-		return tc.Green.Render(msg)
+		return theme.Success().Render(msg)
 	}
 	if strings.HasPrefix(msg, "✗") {
-		return tc.Red.Render(msg)
+		return theme.Danger().Render(msg)
 	}
-	return tc.Yellow.Render(msg)
+	return theme.Warning().Render(msg)
 }
 
 func (m targetListTUIModel) renderTargetHelp(scrollInfo string) string {
-	helpText := "↑↓ navigate  / filter  Ctrl+d/u scroll  M mode  N naming  I include  E exclude  R remove  q quit"
+	helpText := "↑↓ navigate  / filter  Ctrl+d/u scroll  M mode(sk/ag)  N naming(sk)  I include(sk/ag)  E exclude(sk/ag)  R remove  q quit"
 	if m.filtering {
 		helpText = "Enter lock  Esc clear  q quit"
 	}
-	return tc.Help.Render(appendScrollInfo(helpText, scrollInfo))
+	return theme.Dim().MarginLeft(2).Render(appendScrollInfo(helpText, scrollInfo))
 }
 
 func (m targetListTUIModel) renderTargetFilterBar() string {
@@ -882,31 +956,80 @@ func (m *targetListTUIModel) syncTargetListSize() {
 func (m targetListTUIModel) renderTargetDetail(item targetTUIItem) string {
 	var b strings.Builder
 
-	fmt.Fprintf(&b, "%s\n\n", tc.Title.Render(item.name))
+	fmt.Fprintf(&b, "%s\n\n", theme.Title().Render(item.name))
 
 	sc := item.target.SkillsConfig()
-	fmt.Fprintf(&b, "%s  %s\n", tc.Dim.Render("Path:"), shortenPath(sc.Path))
-	fmt.Fprintf(&b, "%s  %s\n", tc.Dim.Render("Mode:"), sync.EffectiveMode(sc.Mode))
-	fmt.Fprintf(&b, "%s  %s\n", tc.Dim.Render("Naming:"), config.EffectiveTargetNaming(sc.TargetNaming))
+	displayPath := item.displayPath
+	if displayPath == "" {
+		displayPath = sc.Path
+	}
+	fmt.Fprintf(&b, "%s\n", theme.Dim().Render("Skills:"))
+	fmt.Fprintf(&b, "%s  %s\n", theme.Dim().Render("Path:"), shortenPath(displayPath))
+	fmt.Fprintf(&b, "%s  %s\n", theme.Dim().Render("Mode:"), sync.EffectiveMode(sc.Mode))
+	fmt.Fprintf(&b, "%s  %s\n", theme.Dim().Render("Naming:"), config.EffectiveTargetNaming(sc.TargetNaming))
+	fmt.Fprintf(&b, "%s  %s\n", theme.Dim().Render("Sync:"), item.skillSync)
 
 	if len(sc.Include) > 0 {
-		fmt.Fprintf(&b, "\n%s\n", tc.Dim.Render("Include:"))
+		fmt.Fprintf(&b, "\n%s\n", theme.Dim().Render("Include:"))
 		for _, p := range sc.Include {
 			fmt.Fprintf(&b, "  %s\n", p)
 		}
 	}
 	if len(sc.Exclude) > 0 {
-		fmt.Fprintf(&b, "\n%s\n", tc.Dim.Render("Exclude:"))
+		fmt.Fprintf(&b, "\n%s\n", theme.Dim().Render("Exclude:"))
 		for _, p := range sc.Exclude {
 			fmt.Fprintf(&b, "  %s\n", p)
 		}
 	}
 
 	if len(sc.Include) == 0 && len(sc.Exclude) == 0 {
-		fmt.Fprintf(&b, "\n%s\n", tc.Dim.Render("No include/exclude filters"))
+		fmt.Fprintf(&b, "\n%s\n", theme.Dim().Render("No include/exclude filters"))
+	}
+
+	if item.agentSummary != nil {
+		agentPath := item.agentSummary.DisplayPath
+		if agentPath == "" {
+			agentPath = item.agentSummary.Path
+		}
+
+		fmt.Fprintf(&b, "\n%s\n", theme.Dim().Render("Agents:"))
+		fmt.Fprintf(&b, "%s  %s\n", theme.Dim().Render("Path:"), shortenPath(agentPath))
+		fmt.Fprintf(&b, "%s  %s\n", theme.Dim().Render("Mode:"), item.agentSummary.Mode)
+		fmt.Fprintf(&b, "%s  %s\n", theme.Dim().Render("Sync:"), formatTargetAgentSyncSummary(item.agentSummary))
+
+		if item.agentSummary.Mode == "symlink" {
+			fmt.Fprintf(&b, "\n%s\n", theme.Dim().Render("Agent include/exclude filters ignored in symlink mode"))
+		} else if len(item.agentSummary.Include) > 0 {
+			fmt.Fprintf(&b, "\n%s\n", theme.Dim().Render("Agent Include:"))
+			for _, p := range item.agentSummary.Include {
+				fmt.Fprintf(&b, "  %s\n", p)
+			}
+		}
+		if item.agentSummary.Mode != "symlink" && len(item.agentSummary.Exclude) > 0 {
+			fmt.Fprintf(&b, "\n%s\n", theme.Dim().Render("Agent Exclude:"))
+			for _, p := range item.agentSummary.Exclude {
+				fmt.Fprintf(&b, "  %s\n", p)
+			}
+		}
+		if item.agentSummary.Mode != "symlink" && len(item.agentSummary.Include) == 0 && len(item.agentSummary.Exclude) == 0 {
+			fmt.Fprintf(&b, "\n%s\n", theme.Dim().Render("No agent include/exclude filters"))
+		}
 	}
 
 	return b.String()
+}
+
+func buildTargetSkillSyncSummary(targetPath, sourcePath, mode string) string {
+	switch sync.EffectiveMode(mode) {
+	case "copy":
+		status, managed, local := sync.CheckStatusCopy(targetPath)
+		return fmt.Sprintf("%s (%d managed, %d local)", status, managed, local)
+	case "merge":
+		status, linked, local := sync.CheckStatusMerge(targetPath, sourcePath)
+		return fmt.Sprintf("%s (%d shared, %d local)", status, linked, local)
+	default:
+		return sync.CheckStatus(targetPath, sourcePath).String()
+	}
 }
 
 // ---- Overlay renders --------------------------------------------------------
@@ -918,19 +1041,19 @@ func (m targetListTUIModel) renderConfirmOverlay() string {
 	}
 	cmd := fmt.Sprintf("skillshare target remove %s %s", flag, m.confirmTarget)
 	return fmt.Sprintf("\n  %s\n\n  → %s\n\n  Proceed? [Y/n] ",
-		tc.Red.Render("Remove target "+m.confirmTarget+"?"), cmd)
+		theme.Danger().Render("Remove target "+m.confirmTarget+"?"), cmd)
 }
 
 func (m targetListTUIModel) renderModePicker() string {
 	var b strings.Builder
 
-	fmt.Fprintf(&b, "\n%s\n", tc.Title.Render("Change mode"))
-	fmt.Fprintf(&b, "%s  %s\n\n", tc.Dim.Render("Target:"), m.modePickerTarget)
+	fmt.Fprintf(&b, "\n%s\n", theme.Title().Render("Change "+m.modePickerScope+" mode"))
+	fmt.Fprintf(&b, "%s  %s\n\n", theme.Dim().Render("Target:"), m.modePickerTarget)
 
 	for i, mode := range targetSyncModes {
 		cursor := "  "
 		if i == m.modeCursor {
-			cursor = tc.Cyan.Render(">") + " "
+			cursor = theme.Accent().Render(">") + " "
 		}
 		var desc string
 		switch mode {
@@ -942,26 +1065,59 @@ func (m targetListTUIModel) renderModePicker() string {
 			desc = " (directory symlink)"
 		}
 		if i == m.modeCursor {
-			fmt.Fprintf(&b, "%s%s%s\n", cursor, tc.Cyan.Render(mode), tc.Dim.Render(desc))
+			fmt.Fprintf(&b, "%s%s%s\n", cursor, theme.Accent().Render(mode), theme.Dim().Render(desc))
 		} else {
-			fmt.Fprintf(&b, "%s%s%s\n", cursor, mode, tc.Dim.Render(desc))
+			fmt.Fprintf(&b, "%s%s%s\n", cursor, mode, theme.Dim().Render(desc))
 		}
 	}
 
-	fmt.Fprintf(&b, "\n%s\n", tc.Help.Render("↑↓ select  Enter confirm  Esc cancel"))
+	fmt.Fprintf(&b, "\n%s\n", theme.Dim().MarginLeft(2).Render("↑↓ select  Enter confirm  Esc cancel"))
+	return b.String()
+}
+
+func (m targetListTUIModel) renderScopePicker() string {
+	var b strings.Builder
+	item, ok := m.list.SelectedItem().(targetTUIItem)
+	if !ok {
+		return ""
+	}
+	options := targetScopeOptions(item, m.scopePickerAction)
+
+	fmt.Fprintf(&b, "\n%s\n", theme.Title().Render("Choose resource"))
+	fmt.Fprintf(&b, "%s  %s\n", theme.Dim().Render("Target:"), m.scopePickerTarget)
+	fmt.Fprintf(&b, "%s  %s\n\n", theme.Dim().Render("Action:"), m.scopePickerAction)
+
+	for i, option := range options {
+		cursor := "  "
+		if i == m.scopePickerCursor {
+			cursor = theme.Accent().Render(">") + " "
+		}
+		label := capitalize(option.scope)
+		if option.enabled {
+			if i == m.scopePickerCursor {
+				fmt.Fprintf(&b, "%s%s\n", cursor, theme.Accent().Render(label))
+			} else {
+				fmt.Fprintf(&b, "%s%s\n", cursor, label)
+			}
+			continue
+		}
+		fmt.Fprintf(&b, "%s%s%s\n", cursor, theme.Dim().Render(label), theme.Dim().Render(" ("+option.disabled+")"))
+	}
+
+	fmt.Fprintf(&b, "\n%s\n", theme.Dim().MarginLeft(2).Render("↑↓ select  Enter confirm  Esc cancel"))
 	return b.String()
 }
 
 func (m targetListTUIModel) renderNamingPicker() string {
 	var b strings.Builder
 
-	fmt.Fprintf(&b, "\n%s\n", tc.Title.Render("Change target naming"))
-	fmt.Fprintf(&b, "%s  %s\n\n", tc.Dim.Render("Target:"), m.namingPickerTarget)
+	fmt.Fprintf(&b, "\n%s\n", theme.Title().Render("Change target naming"))
+	fmt.Fprintf(&b, "%s  %s\n\n", theme.Dim().Render("Target:"), m.namingPickerTarget)
 
 	for i, naming := range config.ValidTargetNamings {
 		cursor := "  "
 		if i == m.namingCursor {
-			cursor = tc.Cyan.Render(">") + " "
+			cursor = theme.Accent().Render(">") + " "
 		}
 		var desc string
 		switch naming {
@@ -971,13 +1127,13 @@ func (m targetListTUIModel) renderNamingPicker() string {
 			desc = " (SKILL.md name)"
 		}
 		if i == m.namingCursor {
-			fmt.Fprintf(&b, "%s%s%s\n", cursor, tc.Cyan.Render(naming), tc.Dim.Render(desc))
+			fmt.Fprintf(&b, "%s%s%s\n", cursor, theme.Accent().Render(naming), theme.Dim().Render(desc))
 		} else {
-			fmt.Fprintf(&b, "%s%s%s\n", cursor, naming, tc.Dim.Render(desc))
+			fmt.Fprintf(&b, "%s%s%s\n", cursor, naming, theme.Dim().Render(desc))
 		}
 	}
 
-	fmt.Fprintf(&b, "\n%s\n", tc.Help.Render("↑↓ select  Enter confirm  Esc cancel"))
+	fmt.Fprintf(&b, "\n%s\n", theme.Dim().MarginLeft(2).Render("↑↓ select  Enter confirm  Esc cancel"))
 	return b.String()
 }
 
@@ -985,15 +1141,15 @@ func (m targetListTUIModel) renderFilterEditPanel() string {
 	var b strings.Builder
 
 	title := capitalize(m.editFilterType)
-	fmt.Fprintf(&b, "%s %s\n", tc.Title.Render(title+" patterns"), tc.Dim.Render("("+m.editFilterTarget+")"))
+	fmt.Fprintf(&b, "%s %s\n", theme.Title().Render(title+" "+m.editFilterScope+" patterns"), theme.Dim().Render("("+m.editFilterTarget+")"))
 	fmt.Fprintln(&b)
 
 	if len(m.editPatterns) == 0 {
-		fmt.Fprintf(&b, "  %s\n", tc.Dim.Render("(empty)"))
+		fmt.Fprintf(&b, "  %s\n", theme.Dim().Render("(empty)"))
 	} else {
 		for i, p := range m.editPatterns {
 			if i == m.editCursor {
-				fmt.Fprintf(&b, "  %s %s\n", tc.Cyan.Render(">"), tc.Cyan.Render(p))
+				fmt.Fprintf(&b, "  %s %s\n", theme.Accent().Render(">"), theme.Accent().Render(p))
 			} else {
 				fmt.Fprintf(&b, "    %s\n", p)
 			}
@@ -1007,9 +1163,9 @@ func (m targetListTUIModel) renderFilterEditPanel() string {
 
 	fmt.Fprintln(&b)
 	if m.editAdding {
-		fmt.Fprintf(&b, "%s\n", tc.Help.Render("Enter confirm  Esc cancel"))
+		fmt.Fprintf(&b, "%s\n", theme.Dim().MarginLeft(2).Render("Enter confirm  Esc cancel"))
 	} else {
-		fmt.Fprintf(&b, "%s\n", tc.Help.Render("a add  d delete  esc back"))
+		fmt.Fprintf(&b, "%s\n", theme.Dim().MarginLeft(2).Render("a add  d delete  esc back"))
 	}
 	return b.String()
 }
@@ -1066,4 +1222,137 @@ func runTargetListTUI(mode runMode, cwd string) (string, string, error) {
 		return "", "", targetList(false)
 	}
 	return m.action, m.confirmTarget, nil
+}
+
+func (m targetListTUIModel) openScopePicker(item targetTUIItem, action string) (tea.Model, tea.Cmd) {
+	m.showScopePicker = true
+	m.scopePickerTarget = item.name
+	m.scopePickerAction = action
+	m.scopePickerCursor = firstEnabledScopeOption(targetScopeOptions(item, action))
+	m.lastActionMsg = ""
+	return m, nil
+}
+
+func (m targetListTUIModel) handleScopePickerKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	item, ok := m.list.SelectedItem().(targetTUIItem)
+	if !ok {
+		m.showScopePicker = false
+		return m, nil
+	}
+	options := targetScopeOptions(item, m.scopePickerAction)
+
+	switch msg.String() {
+	case "q", "esc":
+		m.showScopePicker = false
+		return m, nil
+	case "up", "k":
+		m.scopePickerCursor = moveScopePickerCursor(options, m.scopePickerCursor, -1)
+		return m, nil
+	case "down", "j":
+		m.scopePickerCursor = moveScopePickerCursor(options, m.scopePickerCursor, 1)
+		return m, nil
+	case "enter":
+		if len(options) == 0 || !options[m.scopePickerCursor].enabled {
+			m.showScopePicker = false
+			m.lastActionMsg = "✗ Agents include/exclude filters are ignored in symlink mode"
+			return m, nil
+		}
+		m.showScopePicker = false
+		scope := options[m.scopePickerCursor].scope
+		switch m.scopePickerAction {
+		case "mode":
+			return m.openModePickerForScope(item.name, itemConfigForScope(item, scope), scope)
+		case "include":
+			return m.openFilterEditForScope(item.name, scope, "include", itemConfigForScope(item, scope).Include)
+		case "exclude":
+			return m.openFilterEditForScope(item.name, scope, "exclude", itemConfigForScope(item, scope).Exclude)
+		}
+		return m, nil
+	}
+	return m, nil
+}
+
+func targetScopeOptions(item targetTUIItem, action string) []targetScopeOption {
+	options := []targetScopeOption{{scope: "skills", enabled: true}}
+	if item.agentSummary == nil {
+		return options
+	}
+
+	option := targetScopeOption{scope: "agents", enabled: true}
+	if (action == "include" || action == "exclude") && item.agentSummary.Mode == "symlink" {
+		option.enabled = false
+		option.disabled = "ignored in symlink mode"
+	}
+	return append(options, option)
+}
+
+func firstEnabledScopeOption(options []targetScopeOption) int {
+	for i, option := range options {
+		if option.enabled {
+			return i
+		}
+	}
+	return 0
+}
+
+func moveScopePickerCursor(options []targetScopeOption, current, delta int) int {
+	if len(options) == 0 {
+		return 0
+	}
+	if current < 0 || current >= len(options) {
+		current = firstEnabledScopeOption(options)
+	}
+	next := current
+	for {
+		candidate := next + delta
+		if candidate < 0 || candidate >= len(options) {
+			return current
+		}
+		next = candidate
+		if options[next].enabled {
+			return next
+		}
+	}
+}
+
+func itemConfigForScope(item targetTUIItem, scope string) config.ResourceTargetConfig {
+	if scope == "agents" {
+		return item.agentConfig
+	}
+	return item.target.SkillsConfig()
+}
+
+func scopeSetterGlobal(target *config.TargetConfig, scope string) *config.ResourceTargetConfig {
+	if scope == "agents" {
+		return target.EnsureAgents()
+	}
+	return target.EnsureSkills()
+}
+
+func scopeSetterProject(target *config.ProjectTargetEntry, scope string) *config.ResourceTargetConfig {
+	if scope == "agents" {
+		return target.EnsureAgents()
+	}
+	return target.EnsureSkills()
+}
+
+func agentSummaryMode(summary *targetsummary.AgentSummary) string {
+	if summary == nil {
+		return ""
+	}
+	return summary.Mode
+}
+
+func agentSummaryInclude(summary *targetsummary.AgentSummary) []string {
+	if summary == nil {
+		return nil
+	}
+	return append([]string(nil), summary.Include...)
+}
+
+func agentSummaryExclude(summary *targetsummary.AgentSummary) []string {
+	if summary == nil {
+		return nil
+	}
+	return append([]string(nil), summary.Exclude...)
 }

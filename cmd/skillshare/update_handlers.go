@@ -216,10 +216,11 @@ func updateRegularSkill(uc *updateContext, skillName string) (updateResult, erro
 	skillPath := filepath.Join(uc.sourcePath, skillName)
 
 	// Read metadata to get source
-	meta, err := install.ReadMeta(skillPath)
-	if err != nil {
-		return updateResult{skipped: 1}, fmt.Errorf("cannot read metadata for '%s': %w", skillName, err)
+	store, storeErr := install.LoadMetadataWithMigration(uc.sourcePath, "")
+	if storeErr != nil {
+		return updateResult{skipped: 1}, fmt.Errorf("cannot read metadata for '%s': %w", skillName, storeErr)
 	}
+	meta := store.GetByPath(skillName)
 	if meta == nil || meta.Source == "" {
 		return updateResult{skipped: 1}, fmt.Errorf("skill '%s' has no source metadata, cannot update", skillName)
 	}
@@ -348,9 +349,9 @@ func updateTrackedRepoQuick(uc *updateContext, repoPath string) (bool, *audit.Re
 
 // updateSkillFromMeta updates a skill using its metadata in batch mode.
 // Output is suppressed; caller handles display via progress bar.
-// If cachedMeta is non-nil it is used directly; otherwise metadata is read from disk.
+// If cachedMeta is non-nil it is used directly; otherwise metadata is loaded from the store.
 // Returns (updated, installResult, error).
-func updateSkillFromMeta(uc *updateContext, skillPath string, cachedMeta *install.SkillMeta) (bool, *install.InstallResult, error) {
+func updateSkillFromMeta(uc *updateContext, skillPath string, cachedMeta *install.MetadataEntry) (bool, *install.InstallResult, error) {
 	if uc.opts.dryRun {
 		return false, nil, nil
 	}
@@ -361,9 +362,12 @@ func updateSkillFromMeta(uc *updateContext, skillPath string, cachedMeta *instal
 
 	meta := cachedMeta
 	if meta == nil {
-		var readErr error
-		meta, readErr = install.ReadMeta(skillPath)
-		if readErr != nil || meta == nil || meta.Source == "" {
+		store, _ := install.LoadMetadataWithMigration(uc.sourcePath, "")
+		// GetByPath handles both full-path keys and legacy basename+group keys.
+		if rel, relErr := filepath.Rel(uc.sourcePath, skillPath); relErr == nil {
+			meta = store.GetByPath(filepath.ToSlash(rel))
+		}
+		if meta == nil || meta.Source == "" {
 			return false, nil, nil
 		}
 	}

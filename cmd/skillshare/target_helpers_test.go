@@ -10,14 +10,14 @@ func TestParseFilterFlags(t *testing.T) {
 	tests := []struct {
 		name     string
 		args     []string
-		wantOpts filterUpdateOpts
+		wantOpts parsedTargetFilterFlags
 		wantRest []string
 		wantErr  bool
 	}{
 		{
 			name:     "no flags",
 			args:     []string{"--mode", "merge"},
-			wantOpts: filterUpdateOpts{},
+			wantOpts: parsedTargetFilterFlags{},
 			wantRest: []string{"--mode", "merge"},
 		},
 		{
@@ -28,11 +28,13 @@ func TestParseFilterFlags(t *testing.T) {
 				"--remove-include", "old-*",
 				"--remove-exclude", "test-*",
 			},
-			wantOpts: filterUpdateOpts{
-				AddInclude:    []string{"team-*"},
-				AddExclude:    []string{"_legacy*"},
-				RemoveInclude: []string{"old-*"},
-				RemoveExclude: []string{"test-*"},
+			wantOpts: parsedTargetFilterFlags{
+				Skills: filterUpdateOpts{
+					AddInclude:    []string{"team-*"},
+					AddExclude:    []string{"_legacy*"},
+					RemoveInclude: []string{"old-*"},
+					RemoveExclude: []string{"test-*"},
+				},
 			},
 		},
 		{
@@ -41,8 +43,23 @@ func TestParseFilterFlags(t *testing.T) {
 				"--add-include", "a-*",
 				"--add-include", "b-*",
 			},
-			wantOpts: filterUpdateOpts{
-				AddInclude: []string{"a-*", "b-*"},
+			wantOpts: parsedTargetFilterFlags{
+				Skills: filterUpdateOpts{
+					AddInclude: []string{"a-*", "b-*"},
+				},
+			},
+		},
+		{
+			name: "agent flags",
+			args: []string{
+				"--add-agent-include", "team-*",
+				"--remove-agent-exclude", "draft-*",
+			},
+			wantOpts: parsedTargetFilterFlags{
+				Agents: filterUpdateOpts{
+					AddInclude:    []string{"team-*"},
+					RemoveExclude: []string{"draft-*"},
+				},
 			},
 		},
 		{
@@ -50,9 +67,15 @@ func TestParseFilterFlags(t *testing.T) {
 			args: []string{
 				"--mode", "merge",
 				"--add-include", "team-*",
+				"--add-agent-exclude", "draft-*",
 			},
-			wantOpts: filterUpdateOpts{
-				AddInclude: []string{"team-*"},
+			wantOpts: parsedTargetFilterFlags{
+				Skills: filterUpdateOpts{
+					AddInclude: []string{"team-*"},
+				},
+				Agents: filterUpdateOpts{
+					AddExclude: []string{"draft-*"},
+				},
 			},
 			wantRest: []string{"--mode", "merge"},
 		},
@@ -91,12 +114,36 @@ func TestParseFilterFlags(t *testing.T) {
 				t.Fatalf("unexpected error: %v", err)
 			}
 
-			assertStringSlice(t, "AddInclude", opts.AddInclude, tt.wantOpts.AddInclude)
-			assertStringSlice(t, "AddExclude", opts.AddExclude, tt.wantOpts.AddExclude)
-			assertStringSlice(t, "RemoveInclude", opts.RemoveInclude, tt.wantOpts.RemoveInclude)
-			assertStringSlice(t, "RemoveExclude", opts.RemoveExclude, tt.wantOpts.RemoveExclude)
+			assertStringSlice(t, "Skills.AddInclude", opts.Skills.AddInclude, tt.wantOpts.Skills.AddInclude)
+			assertStringSlice(t, "Skills.AddExclude", opts.Skills.AddExclude, tt.wantOpts.Skills.AddExclude)
+			assertStringSlice(t, "Skills.RemoveInclude", opts.Skills.RemoveInclude, tt.wantOpts.Skills.RemoveInclude)
+			assertStringSlice(t, "Skills.RemoveExclude", opts.Skills.RemoveExclude, tt.wantOpts.Skills.RemoveExclude)
+			assertStringSlice(t, "Agents.AddInclude", opts.Agents.AddInclude, tt.wantOpts.Agents.AddInclude)
+			assertStringSlice(t, "Agents.AddExclude", opts.Agents.AddExclude, tt.wantOpts.Agents.AddExclude)
+			assertStringSlice(t, "Agents.RemoveInclude", opts.Agents.RemoveInclude, tt.wantOpts.Agents.RemoveInclude)
+			assertStringSlice(t, "Agents.RemoveExclude", opts.Agents.RemoveExclude, tt.wantOpts.Agents.RemoveExclude)
 			assertStringSlice(t, "rest", rest, tt.wantRest)
 		})
+	}
+}
+
+func TestParseTargetSettingFlags(t *testing.T) {
+	settings, err := parseTargetSettingFlags([]string{
+		"--mode", "copy",
+		"--agent-mode", "merge",
+		"--target-naming", "standard",
+	})
+	if err != nil {
+		t.Fatalf("parseTargetSettingFlags: %v", err)
+	}
+	if settings.SkillMode != "copy" {
+		t.Fatalf("SkillMode = %q, want copy", settings.SkillMode)
+	}
+	if settings.AgentMode != "merge" {
+		t.Fatalf("AgentMode = %q, want merge", settings.AgentMode)
+	}
+	if settings.Naming != "standard" {
+		t.Fatalf("Naming = %q, want standard", settings.Naming)
 	}
 }
 
@@ -223,6 +270,22 @@ func TestFilterUpdateOpts_HasUpdates(t *testing.T) {
 	if !(filterUpdateOpts{AddInclude: []string{"x"}}).hasUpdates() {
 		t.Error("opts with AddInclude should have updates")
 	}
+}
+
+func TestScopeFilterChanges_Agents(t *testing.T) {
+	changes := scopeFilterChanges("agents", []string{
+		"added include: team-*",
+		"added exclude: draft-*",
+		"removed include: team-*",
+		"removed exclude: draft-*",
+	})
+	want := []string{
+		"added agent include: team-*",
+		"added agent exclude: draft-*",
+		"removed agent include: team-*",
+		"removed agent exclude: draft-*",
+	}
+	assertStringSlice(t, "changes", changes, want)
 }
 
 func TestFindUnknownSkillTargets_CustomTargets(t *testing.T) {

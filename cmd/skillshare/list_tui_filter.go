@@ -10,6 +10,7 @@ type filterQuery struct {
 	TypeTag  string // "tracked", "remote", "local" (empty = any)
 	GroupTag string // substring match against group segment
 	RepoTag  string // substring match against RepoName
+	KindTag  string // "skill" or "agent" (empty = any)
 	FreeText string // remaining text after removing known tags
 }
 
@@ -32,6 +33,10 @@ func parseFilterQuery(raw string) filterQuery {
 		}
 		if val, ok := cutTag(lower, "r:", "repo:"); ok {
 			q.RepoTag = val
+			continue
+		}
+		if val, ok := cutTag(lower, "k:", "kind:"); ok {
+			q.KindTag = normalizeKindValue(val)
 			continue
 		}
 
@@ -69,6 +74,18 @@ func normalizeTypeValue(val string) string {
 	}
 }
 
+// normalizeKindValue maps plural forms to canonical kind names.
+func normalizeKindValue(val string) string {
+	switch val {
+	case "agent", "agents":
+		return "agent"
+	case "skill", "skills":
+		return "skill"
+	default:
+		return val
+	}
+}
+
 // matchSkillItem returns true if the skill item matches all non-empty conditions in the query (AND logic).
 func matchSkillItem(item skillItem, q filterQuery) bool {
 	e := item.entry
@@ -95,6 +112,11 @@ func matchSkillItem(item skillItem, q filterQuery) bool {
 		if !strings.Contains(repo, q.RepoTag) {
 			return false
 		}
+	}
+
+	// Kind tag — exact match on skill kind
+	if q.KindTag != "" && e.Kind != q.KindTag {
+		return false
 	}
 
 	// Free text — substring match on FilterValue
@@ -140,4 +162,19 @@ func skillGroup(e skillEntry) string {
 
 	// Non-tracked: first segment is group
 	return parts[0]
+}
+
+// skillTopGroup returns the top-level visual grouping key for the list TUI.
+// Tracked entries (including nested agents in deep repo subdirs) group by
+// their tracked repo root. Non-tracked nested entries group by their first
+// path segment (e.g. local "mma/foo" → "mma"). Flat root-level entries
+// return "" which renders as the "standalone" bucket.
+func skillTopGroup(e skillEntry) string {
+	if e.RepoName != "" {
+		return e.RepoName
+	}
+	if i := strings.Index(e.RelPath, "/"); i > 0 {
+		return e.RelPath[:i]
+	}
+	return ""
 }

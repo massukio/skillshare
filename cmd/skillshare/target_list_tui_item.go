@@ -6,6 +6,7 @@ import (
 
 	"skillshare/internal/config"
 	"skillshare/internal/sync"
+	"skillshare/internal/targetsummary"
 
 	"github.com/charmbracelet/bubbles/list"
 	tea "github.com/charmbracelet/bubbletea"
@@ -13,8 +14,12 @@ import (
 
 // targetTUIItem wraps a target entry for the bubbles/list widget.
 type targetTUIItem struct {
-	name   string
-	target config.TargetConfig
+	name         string
+	target       config.TargetConfig
+	displayPath  string
+	skillSync    string
+	agentConfig  config.ResourceTargetConfig
+	agentSummary *targetsummary.AgentSummary
 }
 
 func (i targetTUIItem) FilterValue() string { return i.name }

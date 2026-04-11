@@ -11,8 +11,8 @@ Configuration file reference for skillshare.
 ```text
 ~/.config/skillshare/
 ├── config.yaml          ← Configuration file
-├── registry.yaml        ← Skill registry (auto-managed)
 ├── skills/              ← Source directory (your skills)
+│   ├── .metadata.json   ← Skill metadata (auto-managed)
 │   ├── my-skill/
 │   ├── another/
 │   └── _team-repo/      ← Tracked repository
@@ -110,6 +110,9 @@ skills:
   - name: _team-skills
     source: github.com/team/skills
     tracked: true
+
+# Custom agents source (optional, overrides default location)
+agents_source: ~/my-agents
 
 # Custom extras source (optional, overrides default location)
 extras_source: ~/my-extras
@@ -294,24 +297,32 @@ Result for `cursor`:
 Instead of editing YAML manually, use the `target` command:
 
 ```bash
+# Skills
 skillshare target claude --add-include "team-*"
 skillshare target claude --add-exclude "_legacy*"
 skillshare target claude --remove-include "team-*"
+
+# Agents (only for targets with an agents path)
+skillshare target claude --add-agent-include "team-*"
+skillshare target claude --add-agent-exclude "draft-*"
+skillshare target claude --remove-agent-include "team-*"
+
 skillshare sync  # Apply changes
 ```
 
-Duplicate patterns are silently ignored. Invalid glob patterns return an error.
+Duplicate patterns are silently ignored. Invalid glob patterns return an error. Agent filters use the same glob syntax as skill filters, but only work in `merge` and `copy` modes. In `symlink` mode, agent filters are ignored because the entire agents directory is linked as one unit.
 
 See [target command](/docs/reference/commands/target#target-filters-includeexclude) for full reference.
 
 #### Skill-level targets {#skill-level-targets}
 
-Skills can declare which targets they're compatible with using the `targets` field in SKILL.md:
+Skills can declare which targets they're compatible with using `metadata.targets` in SKILL.md. A top-level `targets` field is still supported as a fallback for older skills, but `metadata.targets` takes precedence when both are present:
 
 ```yaml
 ---
 name: claude-prompts
-targets: [claude]
+metadata:
+  targets: [claude]
 ---
 ```
 
@@ -375,9 +386,27 @@ When you run `skillshare install` with no arguments, all listed skills that aren
 
 The `skills:` list is automatically updated after each `install` and `uninstall` operation. You don't need to edit it manually.
 
-:::note Migrated to registry.yaml
-Starting from v0.16.2, installed skill entries are stored in a separate `registry.yaml` file instead of inside `config.yaml`. Existing `skills:` entries in `config.yaml` are migrated automatically on first run. The schema and fields remain the same.
+:::note Migrated to .metadata.json
+Starting from v0.16.2, installed skill entries moved from `config.yaml` to a separate file. In the current version, all installation metadata is stored in a centralized `.metadata.json` inside the `skills/` directory. Migration from older formats (`registry.yaml`, per-skill `.skillshare-meta.json`) is automatic on first run.
 :::
+
+### `agents_source` {#agents-source}
+
+Custom source directory for agents. Overrides the default `~/.config/skillshare/agents/`.
+
+```yaml
+agents_source: ~/my-agents
+```
+
+When set, all agents are read from this directory instead of the default. Supports `~` expansion.
+
+Default: `~/.config/skillshare/agents/` (auto-detected, no need to set explicitly unless you want a custom location).
+
+:::note Global mode only
+Project mode always uses `.skillshare/agents/` and does not support `agents_source`.
+:::
+
+See [Agents](/docs/understand/agents) for details on agent file format, sync behavior, and supported targets.
 
 ### `extras` {#extras}
 
@@ -665,21 +694,29 @@ SKILLSHARE_CONFIG=~/custom-config.yaml skillshare status
 
 ## Skill Metadata
 
-When you install a skill, skillshare creates a `.skillshare-meta.json` file:
+When you install a skill, skillshare records its metadata in the centralized `.metadata.json` file:
 
 ```json
 {
-  "source": "anthropics/skills/skills/pdf",
-  "type": "github",
-  "installed_at": "2026-01-20T15:30:00Z",
-  "repo_url": "https://github.com/anthropics/skills.git",
-  "subdir": "skills/pdf",
-  "version": "abc1234"
+  "skills": [
+    {
+      "name": "pdf",
+      "source": "anthropics/skills/skills/pdf",
+      "type": "github",
+      "installed_at": "2026-01-20T15:30:00Z",
+      "repo_url": "https://github.com/anthropics/skills.git",
+      "subdir": "skills/pdf",
+      "version": "abc1234"
+    }
+  ]
 }
 ```
 
+Each skill entry includes:
+
 | Field | Description |
 |-------|-------------|
+| `name` | Skill directory name |
 | `source` | Original install source input |
 | `type` | Source type (`github`, `local`, etc.) |
 | `installed_at` | Installation timestamp |

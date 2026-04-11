@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"time"
 
@@ -21,9 +22,20 @@ func cmdBackup(args []string) error {
 	if err != nil {
 		return err
 	}
-	if mode == modeProject {
-		return fmt.Errorf("backup is not supported in project mode")
+
+	// Extract kind filter (e.g. "skillshare backup agents" or "--all").
+	kind, args := parseKindArgWithAll(args)
+
+	// Project mode is only supported for agents.
+	if mode == modeProject && kind != kindAgents && kind != kindAll {
+		return fmt.Errorf("backup is not supported in project mode (except for agents)")
 	}
+
+	cwd, _ := os.Getwd()
+	if mode == modeAuto && kind == kindAgents && projectConfigExists(cwd) {
+		mode = modeProject
+	}
+	applyModeLabel(mode)
 
 	start := time.Now()
 	var targetName string
@@ -63,7 +75,11 @@ func cmdBackup(args []string) error {
 		return backupCleanup()
 	}
 
-	err = createBackup(targetName, dryRun)
+	if kind == kindAgents {
+		err = createAgentBackup(mode, cwd, targetName, dryRun)
+	} else {
+		err = createBackup(targetName, dryRun)
+	}
 
 	if !dryRun {
 		e := oplog.NewEntry("backup", statusFromErr(err), time.Since(start))
@@ -322,11 +338,24 @@ func cmdRestore(args []string) error {
 	if err != nil {
 		return err
 	}
-	if mode == modeProject {
-		return fmt.Errorf("restore is not supported in project mode")
+
+	// Extract kind filter (e.g. "skillshare restore agents").
+	// Extract kind filter (e.g. "skillshare restore agents" or "--all").
+	kind, args := parseKindArgWithAll(args)
+
+	// Project mode is only supported for agents.
+	if mode == modeProject && kind != kindAgents && kind != kindAll {
+		return fmt.Errorf("restore is not supported in project mode (except for agents)")
 	}
 
+	cwd, _ := os.Getwd()
+	if mode == modeAuto && kind == kindAgents && projectConfigExists(cwd) {
+		mode = modeProject
+	}
+	applyModeLabel(mode)
+
 	start := time.Now()
+	_ = start // used below
 
 	var targetName string
 	var fromTimestamp string
@@ -355,6 +384,11 @@ func cmdRestore(args []string) error {
 				targetName = args[i]
 			}
 		}
+	}
+
+	// Agent restore uses agent-specific backup entries (name suffixed with "-agents")
+	if kind == kindAgents {
+		return restoreAgentBackup(mode, cwd, targetName, fromTimestamp, force, dryRun)
 	}
 
 	// No target specified → TUI dispatch (or plain text fallback)
@@ -460,22 +494,41 @@ func restoreTUIDispatch(noTUI bool) error {
 		if projectConfigExists(cwd) {
 			mode = modeProject
 		}
-		trashBase := resolveTrashBase(mode, cwd)
-		items := trash.List(trashBase)
+		skillTrashBase := resolveTrashBase(mode, cwd, kindSkills)
+		agentTrashBase := resolveTrashBase(mode, cwd, kindAgents)
+
+		// Merge skill + agent trash
+		var items []trash.TrashEntry
+		for _, e := range trash.List(skillTrashBase) {
+			e.Kind = "skill"
+			items = append(items, e)
+		}
+		for _, e := range trash.List(agentTrashBase) {
+			e.Kind = "agent"
+			items = append(items, e)
+		}
 		if len(items) == 0 {
 			ui.Info("Trash is empty")
 			return nil
 		}
+		sort.Slice(items, func(i, j int) bool {
+			return items[i].Date.After(items[j].Date)
+		})
+
 		modeLabel := "global"
 		if mode == modeProject {
 			modeLabel = "project"
 		}
 		cfgPath := resolveTrashCfgPath(mode, cwd)
-		destDir, err := resolveSourceDir(mode, cwd)
+		destDir, err := resolveSourceDir(mode, cwd, kindSkills)
 		if err != nil {
 			return err
 		}
-		return runTrashTUI(items, trashBase, destDir, cfgPath, modeLabel)
+		agentDestDir, err := resolveSourceDir(mode, cwd, kindAgents)
+		if err != nil {
+			return err
+		}
+		return runTrashTUI(items, skillTrashBase, agentTrashBase, destDir, agentDestDir, cfgPath, modeLabel)
 	}
 
 	return nil
@@ -496,6 +549,28 @@ func restoreFromTimestamp(targetName, targetPath, timestamp string, opts backup.
 
 func restoreFromLatest(targetName, targetPath string, opts backup.RestoreOptions) error {
 	timestamp, err := backup.RestoreLatest(targetName, targetPath, opts)
+	if err != nil {
+		return err
+	}
+	ui.Success("Restored %s from latest backup (%s)", targetName, timestamp)
+	return nil
+}
+
+func restoreFromTimestampInDir(backupDir, targetName, targetPath, timestamp string, opts backup.RestoreOptions) error {
+	backupInfo, err := backup.GetBackupByTimestampInDir(backupDir, timestamp)
+	if err != nil {
+		return err
+	}
+
+	if err := backup.RestoreToPath(backupInfo.Path, targetName, targetPath, opts); err != nil {
+		return err
+	}
+	ui.Success("Restored %s from backup %s", targetName, timestamp)
+	return nil
+}
+
+func restoreFromLatestInDir(backupDir, targetName, targetPath string, opts backup.RestoreOptions) error {
+	timestamp, err := backup.RestoreLatestInDir(backupDir, targetName, targetPath, opts)
 	if err != nil {
 		return err
 	}
@@ -537,7 +612,7 @@ func previewRestoreFromLatest(targetName, targetPath string, opts backup.Restore
 }
 
 func printBackupHelp() {
-	fmt.Println(`Usage: skillshare backup [target] [options]
+	fmt.Println(`Usage: skillshare backup [agents] [target] [options]
 
 Create a snapshot of target skill directories.
 Without arguments, backs up all targets.
@@ -546,6 +621,9 @@ Arguments:
   target               Target name to backup (optional; backs up all if omitted)
 
 Options:
+  --all                Backup both skills and agents
+  --project, -p        Use project mode (.skillshare/backups/); agents only
+  --global, -g         Use global mode (default for skills)
   --list, -l           List all existing backups
   --cleanup, -c        Remove old backups based on retention policy
   --dry-run, -n        Preview what would be backed up or cleaned up
@@ -557,11 +635,14 @@ Examples:
   skillshare backup claude                  # Backup only claude
   skillshare backup --list                  # List all backups
   skillshare backup --cleanup               # Remove old backups
-  skillshare backup --cleanup --dry-run     # Preview cleanup`)
+  skillshare backup --cleanup --dry-run     # Preview cleanup
+  skillshare backup agents                  # Backup all agent targets
+  skillshare backup agents -p               # Backup project agent targets
+  skillshare backup --all                   # Backup skills + agents`)
 }
 
 func printRestoreHelp() {
-	fmt.Println(`Usage: skillshare restore [target] [options]
+	fmt.Println(`Usage: skillshare restore [agents] [target] [options]
 
 Restore target skills from a backup snapshot.
 Without arguments, launches an interactive TUI.
@@ -570,6 +651,9 @@ Arguments:
   target               Target name to restore (optional)
 
 Options:
+  --all                Restore both skills and agents
+  --project, -p        Use project mode (.skillshare/backups/); agents only
+  --global, -g         Use global mode (default for skills)
   --from, -f <ts>      Restore from specific timestamp (e.g. 2024-01-15_14-30-45)
   --force              Overwrite non-empty target directory
   --dry-run, -n        Preview what would be restored without making changes
@@ -581,5 +665,8 @@ Examples:
   skillshare restore claude                 # Restore claude from latest backup
   skillshare restore claude --from 2024-01-15_14-30-45
   skillshare restore claude --dry-run       # Preview restore
-  skillshare restore --no-tui               # List backups (no TUI)`)
+  skillshare restore --no-tui               # List backups (no TUI)
+  skillshare restore agents claude          # Restore agents claude target
+  skillshare restore agents claude -p       # Restore project agents
+  skillshare restore --all claude           # Restore skills + agents`)
 }

@@ -27,6 +27,8 @@ import { formatSyncToast, invalidateAfterSync } from '../lib/sync';
 import StreamProgressBar from '../components/StreamProgressBar';
 import SyncResultList from '../components/SyncResultList';
 import { radius, shadows } from '../design';
+import KindBadge from '../components/KindBadge';
+import SegmentedControl from '../components/SegmentedControl';
 
 function extractIgnoreSources(data: IgnoreSources): IgnoreSources {
   return {
@@ -34,6 +36,9 @@ function extractIgnoreSources(data: IgnoreSources): IgnoreSources {
     ignored_skills: data.ignored_skills ?? [],
     ignore_root: data.ignore_root ?? '',
     ignore_repos: data.ignore_repos ?? [],
+    agent_ignore_root: data.agent_ignore_root ?? '',
+    agent_ignored_count: data.agent_ignored_count ?? 0,
+    agent_ignored_skills: data.agent_ignored_skills ?? [],
   };
 }
 
@@ -46,6 +51,7 @@ export default function SyncPage() {
   const [ignoreSources, setIgnoreSources] = useState<IgnoreSources | null>(null);
   const [ignoredExpanded, setIgnoredExpanded] = useState(false);
   const { toast } = useToast();
+  const [syncScope, setSyncScope] = useState<'skill' | 'agent' | 'both'>('both');
   const toastRef = useRef(toast);
   useEffect(() => { toastRef.current = toast; });
 
@@ -94,7 +100,11 @@ export default function SyncPage() {
     setLastDryRun(dryRun);
     setSyncWarnings([]);
     try {
-      const res = await api.sync({ dryRun, force });
+      const res = await api.sync({
+        dryRun,
+        force,
+        ...(syncScope !== 'both' ? { kind: syncScope } : {}),
+      });
       setResults(res.results);
       setSyncWarnings(res.warnings ?? []);
       setIgnoreSources(extractIgnoreSources(res));
@@ -112,37 +122,46 @@ export default function SyncPage() {
     }
   };
 
-  // Derived ignored skills list
+  // Derived ignored skills/agents list
   const ignoredSkills = ignoreSources?.ignored_skills ?? [];
+  const ignoredAgents = ignoreSources?.agent_ignored_skills ?? [];
+  const allIgnored = [...ignoredSkills, ...ignoredAgents];
 
-  // Calculate diff summary
+  // Calculate diff summary by kind (single pass)
   const diffs = diffData ?? [];
-  const totalActions = diffs.reduce((sum, d) => sum + (d.items?.length ?? 0), 0);
-  const pendingLinks = diffs.reduce(
-    (sum, d) => sum + (d.items?.filter((i) => i.action === 'link').length ?? 0),
-    0,
-  );
-  const pendingUpdates = diffs.reduce(
-    (sum, d) => sum + (d.items?.filter((i) => i.action === 'update').length ?? 0),
-    0,
-  );
-  const pendingPrunes = diffs.reduce(
-    (sum, d) => sum + (d.items?.filter((i) => i.action === 'prune').length ?? 0),
-    0,
-  );
-  const pendingSkips = diffs.reduce(
-    (sum, d) => sum + (d.items?.filter((i) => i.action === 'skip').length ?? 0),
-    0,
-  );
-  const pendingLocal = diffs.reduce(
-    (sum, d) => sum + (d.items?.filter((i) => i.action === 'local').length ?? 0),
-    0,
-  );
-  const syncActions = totalActions - pendingLocal;
+  const counts = useMemo(() => {
+    const c = { skill: { link: 0, update: 0, prune: 0, skip: 0, local: 0 }, agent: { link: 0, update: 0, prune: 0, skip: 0, local: 0 } };
+    for (const d of diffs) {
+      for (const i of d.items ?? []) {
+        const kind = (i.kind ?? 'skill') as 'skill' | 'agent';
+        const action = i.action as keyof typeof c.skill;
+        if (c[kind] && action in c[kind]) c[kind][action]++;
+      }
+    }
+    return c;
+  }, [diffs]);
+
+  const skillSync = counts.skill.link + counts.skill.update + counts.skill.prune + counts.skill.skip;
+  const agentSync = counts.agent.link + counts.agent.update + counts.agent.prune + counts.agent.skip;
+  const pendingLocal = counts.skill.local + counts.agent.local;
+  const syncActions = skillSync + agentSync;
+  const totalLink = counts.skill.link + counts.agent.link;
+  const totalUpdate = counts.skill.update + counts.agent.update;
+  const totalSkip = counts.skill.skip + counts.agent.skip;
+  const totalPrune = counts.skill.prune + counts.agent.prune;
+
+  const statParts = [
+    totalLink > 0 && { n: totalLink, label: 'to link', cls: 'text-success' },
+    totalUpdate > 0 && { n: totalUpdate, label: 'to update', cls: 'text-info' },
+    totalSkip > 0 && { n: totalSkip, label: 'skipped', cls: 'text-warning' },
+    totalPrune > 0 && { n: totalPrune, label: 'to prune', cls: 'text-danger' },
+    pendingLocal > 0 && { n: pendingLocal, label: 'local only', cls: 'text-pencil-light' },
+    allIgnored.length > 0 && { n: allIgnored.length, label: 'ignored', cls: 'text-muted-dark' },
+  ].filter((x): x is { n: number; label: string; cls: string } => !!x);
 
   return (
     <div className="space-y-5 animate-fade-in">
-      <PageHeader icon={<RefreshCw size={24} strokeWidth={2.5} />} title="Sync" subtitle="Push your skills from source to all configured targets" />
+      <PageHeader icon={<RefreshCw size={24} strokeWidth={2.5} />} title="Sync" subtitle="Push resources from source to all configured targets" />
 
       {/* Visual Pipeline */}
       <div className="hidden md:flex items-center justify-center gap-4">
@@ -216,71 +235,75 @@ export default function SyncPage() {
           {diffLoading ? (
             <p className="text-pencil-light text-base">Checking status...</p>
           ) : syncActions > 0 ? (
-            <div className="flex flex-wrap items-center justify-center gap-3">
-              <span className="text-base text-pencil">
-                Pending changes:
-              </span>
-              {pendingLinks > 0 && <Badge variant="success">{pendingLinks} to link</Badge>}
-              {pendingUpdates > 0 && <Badge variant="info">{pendingUpdates} to update</Badge>}
-              {pendingSkips > 0 && <Badge variant="warning">{pendingSkips} skipped</Badge>}
-              {pendingPrunes > 0 && <Badge variant="danger">{pendingPrunes} to prune</Badge>}
-              {pendingLocal > 0 && <Badge variant="default">{pendingLocal} local only</Badge>}
-              {ignoredSkills.length > 0 && (
-                <Badge variant="default">{ignoredSkills.length} ignored</Badge>
-              )}
-            </div>
-          ) : pendingLocal > 0 ? (
-            <div className="flex flex-wrap items-center justify-center gap-3">
-              <div className="flex items-center gap-2 text-success">
-                <CheckCircle size={18} strokeWidth={2.5} />
-                <span className="text-base font-medium">
-                  All targets are in sync!
-                </span>
-              </div>
-              <Badge variant="default">{pendingLocal} local only</Badge>
-              {ignoredSkills.length > 0 && (
-                <Badge variant="default">{ignoredSkills.length} ignored</Badge>
-              )}
+            <div className="space-y-1 text-center">
+              <p className="text-sm">
+                {statParts.map((p, i) => (
+                  <span key={i}>
+                    {i > 0 && <span className="text-muted-dark mx-1.5">·</span>}
+                    <strong className={p.cls}>{p.n}</strong>{' '}
+                    <span className="text-pencil-light">{p.label}</span>
+                  </span>
+                ))}
+              </p>
+              <p className="text-xs text-pencil-light/60">
+                {[
+                  skillSync > 0 && `${skillSync} skill${skillSync !== 1 ? 's' : ''}`,
+                  agentSync > 0 && `${agentSync} agent${agentSync !== 1 ? 's' : ''}`,
+                ].filter(Boolean).join(' · ')}
+              </p>
             </div>
           ) : (
-            <div className="flex flex-wrap items-center justify-center gap-3">
-              <div className="flex items-center gap-2 text-success">
-                <CheckCircle size={18} strokeWidth={2.5} />
-                <span className="text-base font-medium">
-                  All targets are in sync!
-                </span>
-              </div>
-              {ignoredSkills.length > 0 && (
-                <Badge variant="default">{ignoredSkills.length} ignored</Badge>
-              )}
+            <div className="flex flex-wrap items-center justify-center gap-2 text-sm">
+              <CheckCircle size={16} strokeWidth={2.5} className="text-success" />
+              <span className="font-medium text-success">All targets are in sync!</span>
+              {pendingLocal > 0 && <><span className="text-muted-dark">·</span><span className="text-pencil-light">{pendingLocal} local only</span></>}
+              {allIgnored.length > 0 && <><span className="text-muted-dark">·</span><span className="text-pencil-light">{allIgnored.length} ignored</span></>}
             </div>
           )}
 
-          {/* Sync split button */}
-          <SplitButton
-            onClick={() => handleSync()}
-            loading={syncing}
-            variant="primary"
-            size="lg"
-            className="min-w-[200px]"
-            dropdownAlign="right"
-            items={[
-              {
-                label: 'Force Sync',
-                icon: <Zap size={16} strokeWidth={2.5} />,
-                onClick: () => handleSync({ force: true }),
-                confirm: true,
-              },
-              {
-                label: 'Dry Run',
-                icon: <Eye size={16} strokeWidth={2.5} />,
-                onClick: () => handleSync({ dryRun: true }),
-              },
-            ]}
-          >
-            {!syncing && <RefreshCw size={22} strokeWidth={2.5} />}
-            {syncing ? 'Syncing...' : 'Sync Now'}
-          </SplitButton>
+          {/* Action bar */}
+          <div className="flex flex-wrap items-center justify-center gap-3">
+            <SegmentedControl
+              value={syncScope}
+              onChange={setSyncScope}
+              options={[
+                { value: 'skill' as const, label: 'Skills' },
+                { value: 'agent' as const, label: 'Agents' },
+                { value: 'both' as const, label: 'Both' },
+              ]}
+              size="sm"
+              connected
+            />
+            <SplitButton
+              onClick={() => handleSync()}
+              loading={syncing}
+              variant="primary"
+              size="sm"
+              dropdownAlign="right"
+              items={[
+                {
+                  label: syncScope === 'agent' ? 'Force Sync Agents' : syncScope === 'skill' ? 'Force Sync Skills' : 'Force Sync',
+                  icon: <Zap size={16} strokeWidth={2.5} />,
+                  onClick: () => handleSync({ force: true }),
+                  confirm: true,
+                },
+                {
+                  label: 'Dry Run',
+                  icon: <Eye size={16} strokeWidth={2.5} />,
+                  onClick: () => handleSync({ dryRun: true }),
+                },
+              ]}
+            >
+              {!syncing && <RefreshCw size={18} strokeWidth={2.5} />}
+              {syncing
+                ? 'Syncing...'
+                : syncScope === 'skill'
+                  ? 'Sync Skills'
+                  : syncScope === 'agent'
+                    ? 'Sync Agents'
+                    : 'Sync Now'}
+            </SplitButton>
+          </div>
         </div>
       </Card>
 
@@ -308,8 +331,8 @@ export default function SyncPage() {
         </div>
       )}
 
-      {/* Ignored skills collapsible card */}
-      {ignoredSkills.length > 0 && (
+      {/* Ignored skills/agents collapsible card */}
+      {allIgnored.length > 0 && (
         <Card>
           <button
             onClick={() => setIgnoredExpanded((prev) => !prev)}
@@ -322,25 +345,46 @@ export default function SyncPage() {
             )}
             <EyeOff size={16} strokeWidth={2.5} className="text-pencil-light shrink-0" />
             <span className="font-medium text-pencil-light text-left flex-1">
-              Ignored by .skillignore
+              Ignored by .skillignore / .agentignore
             </span>
-            <Badge variant="default">{ignoredSkills.length} skill{ignoredSkills.length !== 1 && 's'}</Badge>
+            <Badge variant="default">{allIgnored.length} resource{allIgnored.length !== 1 && 's'}</Badge>
           </button>
 
           {ignoredExpanded && (() => {
             const hasRoot = !!ignoreSources?.ignore_root;
             const repoCount = ignoreSources?.ignore_repos?.length ?? 0;
+            const hasAgentRoot = !!ignoreSources?.agent_ignore_root;
             return (
-              <div className="mt-3 pl-8 space-y-1.5 animate-fade-in">
-                {ignoredSkills.map((skill) => (
-                  <div key={skill} className="flex items-center gap-2 text-base py-0.5">
-                    <EyeOff size={12} className="text-pencil-light/50 shrink-0" />
-                    <span className="font-mono text-pencil-light text-sm truncate">
-                      {skill}
-                    </span>
+              <div className="mt-3 pl-8 space-y-3 animate-fade-in">
+                {ignoredSkills.length > 0 && (
+                  <div className="space-y-1.5">
+                    <div className="flex items-center gap-2">
+                      <KindBadge kind="skill" />
+                      <span className="text-xs text-pencil-light/70">{ignoredSkills.length}</span>
+                    </div>
+                    {ignoredSkills.map((name) => (
+                      <div key={name} className="flex items-center gap-2 text-base py-0.5 pl-1">
+                        <EyeOff size={12} className="text-pencil-light/50 shrink-0" />
+                        <span className="font-mono text-pencil-light text-sm truncate">{name}</span>
+                      </div>
+                    ))}
                   </div>
-                ))}
-                <div className="mt-2 pt-2 border-t border-dashed border-pencil-light/30 space-y-1">
+                )}
+                {ignoredAgents.length > 0 && (
+                  <div className="space-y-1.5">
+                    <div className="flex items-center gap-2">
+                      <KindBadge kind="agent" />
+                      <span className="text-xs text-pencil-light/70">{ignoredAgents.length}</span>
+                    </div>
+                    {ignoredAgents.map((name) => (
+                      <div key={name} className="flex items-center gap-2 text-base py-0.5 pl-1">
+                        <EyeOff size={12} className="text-pencil-light/50 shrink-0" />
+                        <span className="font-mono text-pencil-light text-sm truncate">{name}</span>
+                      </div>
+                    ))}
+                  </div>
+                )}
+                <div className="pt-2 border-t border-dashed border-pencil-light/30 space-y-1">
                   {hasRoot && (
                     <div className="flex items-center gap-1.5 text-xs text-pencil-light">
                       <Info size={12} className="shrink-0" />
@@ -353,7 +397,13 @@ export default function SyncPage() {
                       <span>{repoCount} repo-level .skillignore {repoCount === 1 ? 'file' : 'files'} active</span>
                     </div>
                   )}
-                  {!hasRoot && repoCount === 0 && (
+                  {hasAgentRoot && (
+                    <div className="flex items-center gap-1.5 text-xs text-pencil-light">
+                      <Info size={12} className="shrink-0" />
+                      <span>Root .agentignore active — edit in Config page</span>
+                    </div>
+                  )}
+                  {!hasRoot && repoCount === 0 && !hasAgentRoot && (
                     <div className="flex items-center gap-1.5 text-xs text-pencil-light">
                       <Info size={12} className="shrink-0" />
                       <span>Edit .skillignore in Config to manage exclusions</span>
@@ -535,11 +585,12 @@ function DiffTargetCard({ diff }: { diff: DiffTarget }) {
   );
 }
 
-function DiffItemRow({ item }: { item: { action: string; skill: string; reason?: string } }) {
+function DiffItemRow({ item }: { item: { action: string; skill: string; reason?: string; kind?: 'skill' | 'agent' } }) {
   return (
     <div className="flex items-center gap-2 text-base py-0.5">
       <ActionBadge action={item.action} />
       <ArrowRight size={12} className="text-muted-dark shrink-0" />
+      <KindBadge kind={item.kind ?? 'skill'} />
       <span className="font-mono text-pencil-light text-sm truncate">
         {item.skill}
       </span>

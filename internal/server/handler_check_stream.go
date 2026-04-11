@@ -45,26 +45,21 @@ func (s *Server) handleCheckStream(w http.ResponseWriter, r *http.Request) {
 	skills, _ := install.GetUpdatableSkills(sourceDir)
 
 	// --- Pre-process: group skills by URL (fast, local only) ---
-	type skillWithMeta struct {
-		name string
-		meta *install.SkillMeta
-	}
-	urlGroups := make(map[string][]skillWithMeta)
+	urlGroups := make(map[string][]skillWithMetaEntry)
 	var localResults []skillCheckResult
 
 	for _, skill := range skills {
-		skillPath := filepath.Join(sourceDir, skill)
-		meta, err := install.ReadMeta(skillPath)
-		if err != nil || meta == nil || meta.RepoURL == "" {
+		entry := s.skillsStore.GetByPath(skill)
+		if entry == nil || entry.RepoURL == "" {
 			localResults = append(localResults, skillCheckResult{
 				Name:   skill,
 				Status: "local",
 			})
 			continue
 		}
-		urlGroups[meta.RepoURL] = append(urlGroups[meta.RepoURL], skillWithMeta{
-			name: skill,
-			meta: meta,
+		urlGroups[entry.RepoURL] = append(urlGroups[entry.RepoURL], skillWithMetaEntry{
+			name:  skill,
+			entry: entry,
 		})
 	}
 
@@ -147,12 +142,12 @@ func (s *Server) handleCheckStream(w http.ResponseWriter, r *http.Request) {
 			for _, sw := range group {
 				r := skillCheckResult{
 					Name:    sw.name,
-					Source:  sw.meta.Source,
-					Version: sw.meta.Version,
+					Source:  sw.entry.Source,
+					Version: sw.entry.Version,
 					Status:  "error",
 				}
-				if !sw.meta.InstalledAt.IsZero() {
-					r.InstalledAt = sw.meta.InstalledAt.Format("2006-01-02")
+				if !sw.entry.InstalledAt.IsZero() {
+					r.InstalledAt = sw.entry.InstalledAt.Format("2006-01-02")
 				}
 				skillResults = append(skillResults, r)
 			}
@@ -163,7 +158,7 @@ func (s *Server) handleCheckStream(w http.ResponseWriter, r *http.Request) {
 		// Fast path: all commit hashes match
 		allMatch := true
 		for _, sw := range group {
-			if sw.meta.Version != remoteHash {
+			if sw.entry.Version != remoteHash {
 				allMatch = false
 				break
 			}
@@ -172,12 +167,12 @@ func (s *Server) handleCheckStream(w http.ResponseWriter, r *http.Request) {
 			for _, sw := range group {
 				r := skillCheckResult{
 					Name:    sw.name,
-					Source:  sw.meta.Source,
-					Version: sw.meta.Version,
+					Source:  sw.entry.Source,
+					Version: sw.entry.Version,
 					Status:  "up_to_date",
 				}
-				if !sw.meta.InstalledAt.IsZero() {
-					r.InstalledAt = sw.meta.InstalledAt.Format("2006-01-02")
+				if !sw.entry.InstalledAt.IsZero() {
+					r.InstalledAt = sw.entry.InstalledAt.Format("2006-01-02")
 				}
 				skillResults = append(skillResults, r)
 			}
@@ -188,7 +183,7 @@ func (s *Server) handleCheckStream(w http.ResponseWriter, r *http.Request) {
 		// Slow path: tree hash comparison
 		var hasTreeHash bool
 		for _, sw := range group {
-			if sw.meta.TreeHash != "" && sw.meta.Subdir != "" {
+			if sw.entry.TreeHash != "" && sw.entry.Subdir != "" {
 				hasTreeHash = true
 				break
 			}
@@ -202,18 +197,18 @@ func (s *Server) handleCheckStream(w http.ResponseWriter, r *http.Request) {
 		for _, sw := range group {
 			r := skillCheckResult{
 				Name:    sw.name,
-				Source:  sw.meta.Source,
-				Version: sw.meta.Version,
+				Source:  sw.entry.Source,
+				Version: sw.entry.Version,
 			}
-			if !sw.meta.InstalledAt.IsZero() {
-				r.InstalledAt = sw.meta.InstalledAt.Format("2006-01-02")
+			if !sw.entry.InstalledAt.IsZero() {
+				r.InstalledAt = sw.entry.InstalledAt.Format("2006-01-02")
 			}
 
-			if sw.meta.Version == remoteHash {
+			if sw.entry.Version == remoteHash {
 				r.Status = "up_to_date"
-			} else if sw.meta.TreeHash != "" && sw.meta.Subdir != "" && remoteTreeHashes != nil {
-				normalizedSubdir := strings.TrimPrefix(sw.meta.Subdir, "/")
-				if rh, ok := remoteTreeHashes[normalizedSubdir]; ok && sw.meta.TreeHash == rh {
+			} else if sw.entry.TreeHash != "" && sw.entry.Subdir != "" && remoteTreeHashes != nil {
+				normalizedSubdir := strings.TrimPrefix(sw.entry.Subdir, "/")
+				if rh, ok := remoteTreeHashes[normalizedSubdir]; ok && sw.entry.TreeHash == rh {
 					r.Status = "up_to_date"
 				} else {
 					r.Status = "update_available"

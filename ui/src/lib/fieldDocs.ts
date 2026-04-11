@@ -53,7 +53,7 @@ export const fieldDocs: Record<string, FieldDoc> = {
 
   // --- Targets ---
   targets: {
-    description: 'Map of target AI tools to configure. Each target uses skills: (and future agents:) sub-keys for per-resource-kind configuration.',
+    description: 'Map of target AI tools to configure. Each target uses skills: and agents: sub-keys for per-resource-kind configuration.',
     type: 'object',
     example: 'targets:\n  claude:\n    skills:\n      mode: merge\n      include: ["team-*"]\n  cursor:\n    skills:\n      mode: symlink',
   },
@@ -95,30 +95,36 @@ export const fieldDocs: Record<string, FieldDoc> = {
     example: 'exclude: ["draft-*", "wip-*"]',
   },
   'targets.agents': {
-    description: '(Reserved — not yet available) Agents-specific target configuration.',
+    description: 'Agents-specific target configuration. Controls path, sync mode, and include/exclude filters for agents.',
     type: 'object',
-    example: 'agents:\n  path: ~/.claude/agents',
+    example: 'agents:\n  path: ~/.claude/agents\n  mode: merge\n  include: ["tutor-*"]\n  exclude: ["draft-*"]',
   },
   'targets.agents.path': {
-    description: '(Reserved) Override the target agents directory path.',
+    description: 'Override the target agents directory path. If omitted, the built-in default for this target is used.',
     type: 'string',
     example: 'path: ~/.claude/agents',
   },
   'targets.agents.mode': {
-    description: '(Reserved) Sync mode for agents.',
+    description: 'Sync mode for agents in this target. If omitted, inherits the top-level mode (defaults to merge).',
     type: 'string',
     allowedValues: ['merge', 'symlink', 'copy'],
     example: 'mode: merge',
   },
+  'targets.agents.target_naming': {
+    description: 'Target entry naming strategy for agents in this target. If omitted, inherits the top-level target_naming. Ignored in symlink mode.',
+    type: 'string',
+    allowedValues: ['flat', 'standard'],
+    example: 'target_naming: standard',
+  },
   'targets.agents.include': {
-    description: '(Reserved) Glob patterns — only matching agents are synced.',
+    description: 'Glob patterns — only matching agents are synced to this target (merge and copy modes).',
     type: 'string[]',
-    example: 'include: ["tutor-*"]',
+    example: 'include: ["tutor-*", "team-*"]',
   },
   'targets.agents.exclude': {
-    description: '(Reserved) Glob patterns — matching agents are excluded from sync.',
+    description: 'Glob patterns — matching agents are excluded from sync to this target (merge and copy modes).',
     type: 'string[]',
-    example: 'exclude: ["draft-*"]',
+    example: 'exclude: ["draft-*", "wip-*"]',
   },
   // Legacy flat fields (kept for backward compat display)
   'targets.include': {

@@ -3,7 +3,6 @@ import { Link } from 'react-router-dom';
 import {
   Puzzle,
   Target,
-  FolderSync,
   ArrowRight,
   RefreshCw,
   Star,
@@ -18,6 +17,7 @@ import {
   ShieldAlert,
   FolderPlus,
   LayoutDashboard,
+  Bot,
 } from 'lucide-react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { queryKeys, staleTimes } from '../lib/queryKeys';
@@ -34,6 +34,8 @@ import { useToast } from '../components/Toast';
 import { api } from '../api/client';
 import type { Target as TargetType, CheckResult, AuditAllResponse, Extra } from '../api/client';
 import { radius, shadows } from '../design';
+import { clearAuditCache } from '../lib/auditCache';
+import { formatSkillDisplayName } from '../lib/resourceNames';
 
 const STAR_CTA_DISMISSED_KEY = 'skillshare.dashboard.starCta.dismissed';
 
@@ -85,8 +87,13 @@ export default function DashboardPage() {
         if (blocked.length > 0) parts.push(`${blocked.length} blocked`);
         toast(`Update complete: ${parts.join(', ')}.`, blocked.length > 0 ? 'warning' : updated > 0 ? 'success' : 'info');
       }
-      blocked.forEach((r) => toast(`${r.name}: ${r.message}`, 'error'));
-      errors.forEach((r) => toast(`${r.name}: ${r.message}`, 'error'));
+      const allUpdateErrors = [
+        ...blocked.map((r) => `${formatSkillDisplayName(r.name)}: ${r.message}`),
+        ...errors.map((r) => `${formatSkillDisplayName(r.name)}: ${r.message}`),
+      ];
+      if (allUpdateErrors.length > 0) {
+        toast(`${allUpdateErrors.length} issue${allUpdateErrors.length !== 1 ? 's' : ''}: ${allUpdateErrors.join('; ')}`, 'error');
+      }
       await queryClient.invalidateQueries({ queryKey: queryKeys.skills.all });
       await queryClient.invalidateQueries({ queryKey: queryKeys.overview });
     } catch (e: unknown) {
@@ -113,7 +120,16 @@ export default function DashboardPage() {
       icon: Puzzle,
       color: 'text-blue',
       bg: 'bg-info-light',
-      to: '/skills',
+      to: '/resources?tab=skills',
+    },
+    {
+      label: 'Agents',
+      value: data.agentCount,
+      subtitle: 'installed',
+      icon: Bot,
+      color: 'text-accent',
+      bg: 'bg-accent/10',
+      to: '/resources?tab=agents',
     },
     {
       label: 'Targets',
@@ -123,15 +139,6 @@ export default function DashboardPage() {
       color: 'text-success',
       bg: 'bg-success-light',
       to: '/targets',
-    },
-    {
-      label: 'Sync Mode',
-      value: data.mode,
-      subtitle: 'current mode',
-      icon: FolderSync,
-      color: 'text-warning',
-      bg: 'bg-warning-light',
-      to: '/sync',
     },
     {
       label: 'Extras',
@@ -154,6 +161,7 @@ export default function DashboardPage() {
           <Link key={label} to={to}>
             <Card
               hover
+              className="h-full"
             >
               <div className="flex items-start gap-3">
                 <div
@@ -183,18 +191,16 @@ export default function DashboardPage() {
 
       {/* Source path card */}
       <Card className="mb-8">
-        <h3
-          className="text-lg font-bold text-pencil mb-2"
-        >
-          Source Directory
+        <h3 className="text-lg font-bold text-pencil mb-3">
+          Source Directories
         </h3>
-        <p
-          className="font-mono text-base text-pencil-light break-all"
-        >
-          {data.source}
-        </p>
-        <p className="text-sm text-muted-dark mt-2">
-          This is where your skills live. All targets sync from here.
+        <div className="space-y-2.5">
+          <SourceRow label="Skills" path={data.source} />
+          {data.agentsSource && <SourceRow label="Agents" path={data.agentsSource} />}
+          {data.extrasSource && <SourceRow label="Extras" path={data.extrasSource} />}
+        </div>
+        <p className="text-sm text-muted-dark mt-3">
+          All targets sync from these directories.
         </p>
       </Card>
 
@@ -319,7 +325,7 @@ export default function DashboardPage() {
             </div>
           </Link>
 
-          <Link to="/skills" className="h-full">
+          <Link to="/resources" className="h-full">
             <div
               className="flex items-center gap-3 px-5 py-4 h-full bg-success-light border-2 border-pencil transition-all duration-100 hover:translate-x-[2px] hover:translate-y-[2px] cursor-pointer group"
               style={{
@@ -409,6 +415,15 @@ export default function DashboardPage() {
   );
 }
 
+function SourceRow({ label, path }: { label: string; path: string }) {
+  return (
+    <div className="flex items-baseline gap-3">
+      <span className="text-xs font-bold uppercase tracking-wider text-pencil-light w-12 shrink-0">{label}</span>
+      <span className="font-mono text-sm text-pencil break-all">{path}</span>
+    </div>
+  );
+}
+
 /* -- Tracked Repositories Section --------------------- */
 
 function TrackedReposSection({ repos }: { repos: { name: string; skillCount: number; dirty: boolean }[] }) {
@@ -419,6 +434,7 @@ function TrackedReposSection({ repos }: { repos: { name: string; skillCount: num
   const [deletingRepos, setDeletingRepos] = useState<Set<string>>(new Set());
 
   const invalidateRepoData = async () => {
+    clearAuditCache(queryClient);
     await queryClient.invalidateQueries({ queryKey: queryKeys.overview });
     await queryClient.invalidateQueries({ queryKey: queryKeys.skills.all });
     await queryClient.invalidateQueries({ queryKey: queryKeys.trash });

@@ -252,16 +252,18 @@ func TestLog_SyncPartialStatus(t *testing.T) {
 
 	goodTarget := sb.CreateTarget("claude")
 
-	// Create the broken target as a valid directory (passes validation),
-	// then make it read-only so sync fails when trying to write symlinks.
-	brokenTarget := filepath.Join(sb.Home, "broken-target", "skills")
-	if err := os.MkdirAll(brokenTarget, 0755); err != nil {
-		t.Fatalf("failed to create broken target: %v", err)
+	// Create a broken target that passes validation but fails during sync.
+	// A dangling symlink makes os.Stat return "not exist" (validation passes)
+	// but os.MkdirAll fails because the symlink entry blocks directory creation.
+	// This works even as root (unlike chmod-based approaches).
+	brokenParent := filepath.Join(sb.Home, "broken-target")
+	if err := os.MkdirAll(brokenParent, 0755); err != nil {
+		t.Fatalf("failed to create broken parent: %v", err)
 	}
-	if err := os.Chmod(brokenTarget, 0444); err != nil {
-		t.Fatalf("failed to chmod broken target: %v", err)
+	brokenTarget := filepath.Join(brokenParent, "skills")
+	if err := os.Symlink("/nonexistent/dangling/target", brokenTarget); err != nil {
+		t.Fatalf("failed to create dangling symlink: %v", err)
 	}
-	t.Cleanup(func() { os.Chmod(brokenTarget, 0755) })
 
 	sb.WriteConfig(`source: ` + sb.SourcePath + `
 mode: merge

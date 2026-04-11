@@ -154,14 +154,18 @@ skillshare uninstall _team-skills
 
 Tracked repos also work in project mode. The repo is cloned into `.skillshare/skills/` and added to `.skillshare/.gitignore` (so the tracked repo's git history doesn't conflict with your project's git). Project logs (`.skillshare/logs/`) and trash (`.skillshare/trash/`) are also ignored by default.
 
-Installing a tracked repo auto-records `tracked: true` in `.skillshare/registry.yaml`, so new team members get the correct clone behavior via `skillshare install -p`:
+Installing a tracked repo auto-records `tracked: true` in `.skillshare/.metadata.json`, so new team members get the correct clone behavior via `skillshare install -p`:
 
-```yaml
-# .skillshare/registry.yaml (auto-updated after install --track -p)
-skills:
-  - name: _team-shared-skills
-    source: github.com/team/shared-skills
-    tracked: true
+```json
+{
+  "skills": [
+    {
+      "name": "_team-shared-skills",
+      "source": "github.com/team/shared-skills",
+      "tracked": true
+    }
+  ]
+}
 ```
 
 ```bash

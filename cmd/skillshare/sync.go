@@ -100,6 +100,9 @@ func cmdSync(args []string) error {
 
 	applyModeLabel(mode)
 
+	// Extract kind filter (e.g. "skillshare sync agents").
+	kind, rest := parseKindArg(rest)
+
 	dryRun, force, jsonOutput := parseSyncFlags(rest)
 
 	prevDiagOutput := sync.DiagOutput
@@ -111,25 +114,39 @@ func cmdSync(args []string) error {
 	}
 
 	if mode == modeProject {
+		// Agent-only project sync
+		if kind == kindAgents {
+			return syncAgentsProject(cwd, dryRun, force, jsonOutput, start)
+		}
+
 		if hasAll && !jsonOutput {
 			// Run project extras sync after project skills sync (text mode)
 			defer func() {
-				fmt.Println()
 				if extrasErr := cmdSyncExtras(append([]string{"-p"}, rest...)); extrasErr != nil {
 					ui.Warning("Extras sync: %v", extrasErr)
 				}
 			}()
 		}
+
 		stats, results, projIgnoreStats, err := cmdSyncProject(cwd, dryRun, force, jsonOutput)
 		stats.ProjectScope = true
 		logSyncOp(config.ProjectConfigPath(cwd), stats, start, err)
+
+		// Append agent sync when kind=all or --all
+		if kind == kindAll || hasAll {
+			if agentErr := syncAgentsProject(cwd, dryRun, force, jsonOutput, start); agentErr != nil && err == nil {
+				err = agentErr
+			}
+		}
+
 		if jsonOutput {
 			if hasAll {
 				projCfg, loadErr := config.LoadProject(cwd)
 				if loadErr == nil && len(projCfg.Extras) > 0 {
+					agentPaths := collectAgentTargetPathsProject(cwd)
 					extrasEntries := runExtrasSyncEntries(projCfg.Extras, func(extra config.ExtraConfig) string {
 						return config.ExtrasSourceDirProject(cwd, extra.Name)
-					}, dryRun, force, cwd)
+					}, dryRun, force, cwd, agentPaths)
 					return syncOutputJSON(results, dryRun, start, projIgnoreStats, err, extrasEntries)
 				}
 			}
@@ -160,7 +177,14 @@ func cmdSync(args []string) error {
 		}
 	}
 
-	// Phase 1: Discovery
+	// Agent-only mode: skip skill discovery/sync entirely
+	if kind == kindAgents {
+		_, agentErr := syncAgentsGlobal(cfg, dryRun, force, jsonOutput, start)
+		logSyncOp(config.ConfigPath(), syncLogStats{DryRun: dryRun, Force: force}, start, agentErr)
+		return agentErr
+	}
+
+	// Phase 1: Discovery (skills)
 	var spinner *ui.Spinner
 	if !jsonOutput {
 		spinner = ui.StartSpinner("Discovering skills")
@@ -253,17 +277,24 @@ func cmdSync(args []string) error {
 
 	if jsonOutput {
 		if hasAll && len(cfg.Extras) > 0 {
+			agentPaths := collectAgentTargetPathsGlobal(cfg)
 			extrasEntries := runExtrasSyncEntries(cfg.Extras, func(extra config.ExtraConfig) string {
 				return config.ResolveExtrasSourceDir(extra, cfg.ExtrasSource, cfg.Source)
-			}, dryRun, force, "")
+			}, dryRun, force, "", agentPaths)
 			return syncOutputJSON(results, dryRun, start, ignoreStats, syncErr, extrasEntries)
 		}
 		return syncOutputJSON(results, dryRun, start, ignoreStats, syncErr)
 	}
 
+	// Agent sync when kind=all or --all (after skill sync)
+	if kind == kindAll || hasAll {
+		if _, agentErr := syncAgentsGlobal(cfg, dryRun, force, jsonOutput, start); agentErr != nil && syncErr == nil {
+			syncErr = agentErr
+		}
+	}
+
 	if hasAll {
-		fmt.Println()
-		if extrasErr := cmdSyncExtras(rest); extrasErr != nil {
+		if extrasErr := cmdSyncExtras(append([]string{"-g"}, rest...)); extrasErr != nil {
 			ui.Warning("Extras sync: %v", extrasErr)
 		}
 	}
@@ -406,6 +437,25 @@ func backupTargetsBeforeSync(cfg *config.Config) {
 				backedUp = true
 			}
 			ui.Success("%s -> %s", name, backupPath)
+		}
+	}
+
+	// Also backup agent targets if any exist.
+	backupDir, agentTargets, err := resolveGlobalAgentBackupContextFromCfg(cfg)
+	if err != nil || len(agentTargets) == 0 {
+		return
+	}
+	for _, at := range agentTargets {
+		entryName := at.name + "-agents"
+		bp, bErr := backup.CreateInDir(backupDir, entryName, at.agentPath)
+		if bErr != nil {
+			ui.Warning("Failed to backup %s: %v", entryName, bErr)
+		} else if bp != "" {
+			if !backedUp {
+				ui.Header("Backing up")
+				backedUp = true
+			}
+			ui.Success("%s -> %s", entryName, bp)
 		}
 	}
 }
@@ -766,12 +816,12 @@ func syncSymlinkMode(name string, target config.TargetConfig, source string, dry
 }
 
 func printSyncHelp() {
-	fmt.Println(`Usage: skillshare sync [options]
+	fmt.Println(`Usage: skillshare sync [agents] [options]
 
 Sync skills from source to all configured targets.
 
 Options:
-  --all             Sync skills and extras
+  --all             Sync skills, agents, and extras
   --dry-run, -n     Preview changes without applying
   --force, -f       Force sync (overwrite local changes)
   --json            Output results as JSON
@@ -785,6 +835,7 @@ Subcommands:
 Examples:
   skillshare sync                Sync skills to all targets
   skillshare sync --dry-run      Preview sync changes
-  skillshare sync --all          Sync skills and extras
-  skillshare sync -p             Sync project-level skills`)
+  skillshare sync --all          Sync skills, agents, and extras
+  skillshare sync -p             Sync project-level skills
+  skillshare sync agents         Sync agents only`)
 }

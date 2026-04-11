@@ -1,5 +1,5 @@
 ---
-sidebar_position: 6
+sidebar_position: 7
 ---
 
 # Project Skills
@@ -20,7 +20,7 @@ Use project skills when your team needs repo-specific AI instructions (coding st
 | **Project tooling** | CI/CD deployment knowledge, testing patterns, migration scripts specific to this repo |
 | **Onboarding acceleration** | "How does auth work here?" — the AI already knows, from committed project skills |
 | **Open source projects** | Maintainers commit `.skillshare/` so contributors get project-specific AI context on clone |
-| **Community skill curation** | A repo's `registry.yaml` serves as a curated skill list — anyone can `install -p` to get the same setup |
+| **Community skill curation** | A repo's `.metadata.json` serves as a curated skill list — anyone can `install -p` to get the same setup |
 
 ---
 
@@ -86,7 +86,7 @@ skillshare sync -g       # Force global mode
 <project-root>/
 ├── .skillshare/
 │   ├── config.yaml              # Targets + settings (incl. extras)
-│   ├── registry.yaml            # Remote skills list (auto-managed)
+│   ├── .metadata.json           # Remote skills list (auto-managed)
 │   ├── .gitignore               # Ignores logs/, trash/, and cloned remote/tracked skill dirs
 │   ├── extras/                  # Extras source directories
 │   │   └── rules/               # e.g. extras init rules --target .claude/rules -p
@@ -95,12 +95,10 @@ skillshare sync -g       # Force global mode
 │       ├── my-local-skill/      # Created manually or via `skillshare new`
 │       │   └── SKILL.md
 │       ├── remote-skill/        # Installed via `skillshare install -p`
-│       │   ├── SKILL.md
-│       │   └── .skillshare-meta.json
+│       │   └── SKILL.md
 │       ├── tools/               # Category folder (via --into tools)
 │       │   └── pdf/             # Installed via `skillshare install ... --into tools -p`
-│       │       ├── SKILL.md
-│       │       └── .skillshare-meta.json
+│       │       └── SKILL.md
 │       └── _team-skills/        # Installed via `skillshare install --track -p`
 │           ├── .git/            # Git history preserved
 │           ├── frontend/ui/
@@ -141,16 +139,22 @@ targets:
 - **Short**: Just the target name (e.g., `claude`). Uses known default path, merge mode.
 - **Long**: Object with `name`, optional `path`, optional `mode` (`merge`, `copy`, or `symlink`), and optional `include`/`exclude` filters. Supports relative paths (resolved from project root) and `~` expansion.
 
-Remote skill installations are tracked in a separate file, `.skillshare/registry.yaml`:
+Remote skill installations are tracked in a separate file, `.skillshare/.metadata.json`:
 
-```yaml
-# .skillshare/registry.yaml (auto-managed by install/uninstall)
-skills:
-  - name: pdf-skill
-    source: anthropic/skills/pdf
-  - name: _team-skills
-    source: github.com/team/skills
-    tracked: true                  # Tracked repo: cloned with git history
+```json
+{
+  "skills": [
+    {
+      "name": "pdf-skill",
+      "source": "anthropic/skills/pdf"
+    },
+    {
+      "name": "_team-skills",
+      "source": "github.com/team/skills",
+      "tracked": true
+    }
+  ]
+}
 ```
 
 **Skills** list tracks remote installations only. Local skills don't need entries here.
@@ -158,7 +162,7 @@ skills:
 - `tracked: true`: Installed with `--track` (git repo with `.git/` preserved). When someone runs `skillshare install -p`, tracked skills are cloned with full git history so `skillshare update` works correctly.
 
 :::tip Portable Skill Manifest
-`config.yaml` and `registry.yaml` together form a portable skill manifest in both global and project mode. In a project, commit them to git and anyone can run `skillshare install -p && skillshare sync`. For global mode, copy both files to a new machine and run `skillshare install && skillshare sync`. This works for teams, open source contributors, community templates, and dotfiles across machines.
+`config.yaml` and `.metadata.json` together form a portable skill manifest in both global and project mode. In a project, commit them to git and anyone can run `skillshare install -p && skillshare sync`. For global mode, copy both files to a new machine and run `skillshare install && skillshare sync`. This works for teams, open source contributors, community templates, and dotfiles across machines.
 :::
 
 ---

@@ -200,6 +200,8 @@ metadata:
 
 Currently, `targets` is the only `metadata` field that skillshare processes. Other fields (like `pattern`, `domain`, `interaction`) are preserved in the frontmatter but not used by skillshare — they may be consumed by other tools in the ecosystem.
 
+For backward compatibility, skillshare also reads a top-level `targets` field. If both are present, `metadata.targets` takes precedence.
+
 ## Custom Fields
 
 You can add any custom top-level fields:
@@ -261,23 +263,31 @@ Response: "The function looks correct but could benefit from type hints..."
 
 ---
 
-## Skill Metadata File
+## Centralized Metadata
 
-When you install a skill, skillshare creates a `.skillshare-meta.json` file:
+When you install a skill, skillshare records its metadata in `.metadata.json` (centralized for all skills):
 
 ```json
 {
-  "source": "anthropics/skills/skills/pdf",
-  "type": "github",
-  "installed_at": "2026-01-20T15:30:00Z",
-  "repo_url": "https://github.com/anthropics/skills.git",
-  "subdir": "skills/pdf",
-  "version": "abc1234"
+  "skills": [
+    {
+      "name": "pdf",
+      "source": "anthropics/skills/skills/pdf",
+      "type": "github",
+      "installed_at": "2026-01-20T15:30:00Z",
+      "repo_url": "https://github.com/anthropics/skills.git",
+      "subdir": "skills/pdf",
+      "version": "abc1234"
+    }
+  ]
 }
 ```
 
+Each skill entry includes:
+
 | Field | Description |
 |-------|-------------|
+| `name` | Skill directory name |
 | `source` | Original install source input |
 | `type` | Source type (`github`, `local`, etc.) |
 | `installed_at` | Installation timestamp |

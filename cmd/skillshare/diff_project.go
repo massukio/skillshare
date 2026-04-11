@@ -10,7 +10,10 @@ import (
 	"skillshare/internal/ui"
 )
 
-func cmdDiffProject(root, targetName string, opts diffRenderOpts, start time.Time) error {
+func cmdDiffProject(root, targetName string, kind resourceKindFilter, opts diffRenderOpts, start time.Time) error {
+	if kind == kindAgents {
+		return diffProjectAgents(root, targetName, opts, start)
+	}
 	if !projectConfigExists(root) {
 		if err := performProjectInit(root, projectInitOptions{}); err != nil {
 			return err
@@ -121,6 +124,9 @@ func cmdDiffProject(root, targetName string, opts diffRenderOpts, start time.Tim
 			return config.ExtrasSourceDirProject(root, extra.Name)
 		})
 	}
+
+	// Merge agent diffs into skill results so they appear together
+	results = mergeAgentDiffsProject(root, results, targetName)
 
 	if opts.jsonOutput {
 		return diffOutputJSONWithExtras(results, extrasResults, start)

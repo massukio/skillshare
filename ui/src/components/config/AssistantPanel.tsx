@@ -23,8 +23,9 @@ interface Props {
   collapsed: boolean;
   onToggleCollapse: () => void;
   onRevert: () => void;
-  mode?: 'config' | 'skillignore';
+  mode?: 'config' | 'skillignore' | 'agentignore';
   ignoredSkills?: string[];
+  ignoredAgents?: string[];
 }
 
 export default function AssistantPanel({
@@ -40,6 +41,7 @@ export default function AssistantPanel({
   onRevert,
   mode = 'config',
   ignoredSkills = [],
+  ignoredAgents = [],
 }: Props) {
   const [lockedView, setLockedView] = useState<LockedView>('auto');
 
@@ -74,20 +76,24 @@ export default function AssistantPanel({
 
   // Determine which context panel to render
   const renderContextArea = () => {
-    if (mode === 'skillignore') {
+    if (mode === 'skillignore' || mode === 'agentignore') {
+      const isAgent = mode === 'agentignore';
+      const items = isAgent ? ignoredAgents : ignoredSkills;
+      const label = isAgent ? 'Ignored Agents' : 'Ignored Skills';
+      const emptyLabel = isAgent ? 'No agents ignored yet.' : 'No skills ignored yet.';
       return (
         <div className="flex flex-col gap-1 p-3">
           <p className="text-xs font-medium text-pencil-light uppercase tracking-wide mb-2 flex items-center gap-1.5">
             <EyeOff size={12} strokeWidth={2} />
-            Ignored Skills
+            {label}
           </p>
-          {ignoredSkills.length === 0 ? (
-            <p className="text-xs text-pencil-light italic">No skills ignored yet.</p>
+          {items.length === 0 ? (
+            <p className="text-xs text-pencil-light italic">{emptyLabel}</p>
           ) : (
             <ul className="flex flex-col gap-0.5">
-              {ignoredSkills.map(skill => (
-                <li key={skill} className="text-xs text-pencil font-mono bg-paper rounded px-2 py-0.5">
-                  {skill}
+              {items.map(item => (
+                <li key={item} className="text-xs text-pencil font-mono bg-paper rounded px-2 py-0.5">
+                  {item}
                 </li>
               ))}
             </ul>

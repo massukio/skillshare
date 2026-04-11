@@ -5,6 +5,8 @@ import (
 	"io"
 	"strings"
 
+	"skillshare/internal/theme"
+
 	"github.com/charmbracelet/bubbles/list"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
@@ -27,7 +29,10 @@ func (g groupItem) Title() string       { return g.label }
 func (g groupItem) Description() string { return "" }
 
 // listSkillDelegate renders a compact single-line browser row for the list TUI.
-type listSkillDelegate struct{}
+// activeTab is a shared pointer so the delegate sees tab changes without re-creation.
+type listSkillDelegate struct {
+	activeTab *listTab // nil-safe: treat nil as listTabAll
+}
 
 func (listSkillDelegate) Height() int  { return 1 }
 func (listSkillDelegate) Spacing() int { return 0 }
@@ -35,7 +40,7 @@ func (listSkillDelegate) Update(_ tea.Msg, _ *list.Model) tea.Cmd {
 	return nil
 }
 
-func (listSkillDelegate) Render(w io.Writer, m list.Model, index int, item list.Item) {
+func (d listSkillDelegate) Render(w io.Writer, m list.Model, index int, item list.Item) {
 	width := m.Width()
 	if width <= 0 {
 		width = 40
@@ -46,7 +51,8 @@ func (listSkillDelegate) Render(w io.Writer, m list.Model, index int, item list.
 		renderGroupRow(w, v, width)
 	case skillItem:
 		selected := index == m.Index()
-		renderSkillRow(w, v, width, selected)
+		allTab := d.activeTab != nil && *d.activeTab == listTabAll
+		renderSkillRow(w, v, width, selected, allTab)
 	}
 }
 
@@ -55,7 +61,7 @@ func renderGroupRow(w io.Writer, g groupItem, width int) {
 	if g.count > 0 {
 		label += fmt.Sprintf(" (%d)", g.count)
 	}
-	label = tc.Dim.Render(label)
+	label = theme.Dim().Render(label)
 
 	lineWidth := width - lipgloss.Width(label) - 3 // "─ " prefix + " "
 	if lineWidth < 2 {
@@ -63,21 +69,21 @@ func renderGroupRow(w io.Writer, g groupItem, width int) {
 	}
 	line := strings.Repeat("─", lineWidth)
 
-	fmt.Fprint(w, tc.Dim.Render("─ ")+label+" "+tc.Dim.Render(line))
+	fmt.Fprint(w, theme.Dim().Render("─ ")+label+" "+theme.Dim().Render(line))
 }
 
-func renderSkillRow(w io.Writer, skill skillItem, width int, selected bool) {
-	renderPrefixRow(w, skillTitleLine(skill.entry), width, selected)
+func renderSkillRow(w io.Writer, skill skillItem, width int, selected bool, allTab bool) {
+	renderPrefixRow(w, skillTitleLine(skill.entry, allTab), width, selected)
 }
 
 // renderPrefixRow renders a single-line list row with a "▌" prefix bar.
 // Shared by list TUI and audit TUI delegates.
 func renderPrefixRow(w io.Writer, line string, width int, selected bool) {
-	prefixStyle := tc.ListRowPrefix
-	bodyStyle := tc.ListRow
+	prefixStyle := theme.Dim()
+	bodyStyle := lipgloss.NewStyle().PaddingLeft(1)
 	if selected {
-		prefixStyle = tc.ListRowPrefixSelected
-		bodyStyle = tc.ListRowSelected
+		prefixStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("#D4D93C"))
+		bodyStyle = theme.SelectedRow().PaddingLeft(1)
 		// Strip embedded ANSI so ListRowSelected's background fills the full
 		// row width — compound ANSI sequences (e.g. icon + name) contain
 		// resets that break the parent background propagation in lipgloss.
@@ -142,13 +148,13 @@ func (d prefixItemDelegate) Render(w io.Writer, m list.Model, index int, item li
 // renderPrefixRowWithDesc renders a 2-line list row with a "▌" prefix bar.
 // Line 1: title (same as renderPrefixRow). Line 2: description in muted style.
 func renderPrefixRowWithDesc(w io.Writer, title, desc string, width int, selected bool) {
-	prefixStyle := tc.ListRowPrefix
-	bodyStyle := tc.ListRow
-	descStyle := tc.ListMeta
+	prefixStyle := theme.Dim()
+	bodyStyle := lipgloss.NewStyle().PaddingLeft(1)
+	descStyle := theme.Dim().PaddingLeft(1)
 	if selected {
-		prefixStyle = tc.ListRowPrefixSelected
-		bodyStyle = tc.ListRowSelected
-		descStyle = tc.ListMetaSelected
+		prefixStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("#D4D93C"))
+		bodyStyle = theme.SelectedRow().PaddingLeft(1)
+		descStyle = theme.SelectedRow().PaddingLeft(1)
 		title = xansi.Strip(title)
 		desc = xansi.Strip(desc)
 	}
@@ -201,12 +207,20 @@ func (i skillItem) Description() string {
 	return ""
 }
 
-func skillTitleLine(e skillEntry) string {
+func skillTitleLine(e skillEntry, allTab bool) string {
 	if e.Disabled {
 		// Disabled: dim the entire name + ⊘ prefix
-		return tc.Dim.Render("⊘ " + compactSkillPath(e))
+		return theme.Dim().Render("⊘ " + compactSkillPath(e))
 	}
-	title := colorSkillPath(compactSkillPath(e))
+	var prefix string
+	if allTab {
+		if e.Kind == "agent" {
+			prefix = theme.Accent().Render("[A]") + " "
+		} else {
+			prefix = theme.Accent().Render("[S]") + " "
+		}
+	}
+	title := prefix + colorSkillPath(compactSkillPath(e))
 	if badge := skillTypeBadge(e); badge != "" {
 		return title + "  " + badge
 	}
@@ -241,10 +255,10 @@ func baseSkillPath(e skillEntry) string {
 func skillTypeBadge(e skillEntry) string {
 	var badge string
 	if e.RepoName == "" && e.Source == "" {
-		badge = tc.BadgeLocal.Render("local")
+		badge = theme.Badge().Render("local")
 	}
 	if e.Disabled {
-		disabled := tc.BadgeDisabled.Render("disabled")
+		disabled := theme.Badge().Faint(true).Render("disabled")
 		if badge != "" {
 			return badge + "  " + disabled
 		}
@@ -258,7 +272,7 @@ func skillTypeBadge(e skillEntry) string {
 func colorSkillPath(path string) string {
 	segments := strings.Split(path, "/")
 	if len(segments) <= 1 {
-		return tc.Emphasis.Render(path)
+		return theme.Primary().Render(path)
 	}
 
 	dirs := segments[:len(segments)-1]
@@ -267,21 +281,21 @@ func colorSkillPath(path string) string {
 	var parts []string
 	for idx, dir := range dirs {
 		if idx == 0 {
-			parts = append(parts, tc.Cyan.Render(dir))
+			parts = append(parts, theme.Accent().Render(dir))
 		} else {
-			parts = append(parts, tc.Dim.Render(dir))
+			parts = append(parts, theme.Dim().Render(dir))
 		}
 	}
 
-	sep := tc.Faint.Render("/")
-	return strings.Join(parts, sep) + sep + tc.Emphasis.Render(name)
+	sep := theme.Dim().Render("/")
+	return strings.Join(parts, sep) + sep + theme.Primary().Render(name)
 }
 
 // colorSkillPathBold is like colorSkillPath but renders the skill name in bold
 // for extra prominence in the detail panel header.
 func colorSkillPathBold(path string) string {
 	segments := strings.Split(path, "/")
-	boldName := lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("15"))
+	boldName := theme.Primary().Bold(true)
 	if len(segments) <= 1 {
 		return boldName.Render(path)
 	}
@@ -292,13 +306,13 @@ func colorSkillPathBold(path string) string {
 	var parts []string
 	for idx, dir := range dirs {
 		if idx == 0 {
-			parts = append(parts, tc.Cyan.Render(dir))
+			parts = append(parts, theme.Accent().Render(dir))
 		} else {
-			parts = append(parts, tc.Dim.Render(dir))
+			parts = append(parts, theme.Dim().Render(dir))
 		}
 	}
 
-	sep := tc.Faint.Render("/")
+	sep := theme.Dim().Render("/")
 	return strings.Join(parts, sep) + sep + boldName.Render(name)
 }
 
@@ -318,16 +332,20 @@ func toSkillItems(entries []skillEntry) []skillItem {
 	return items
 }
 
-// buildGroupedItems inserts groupItem separators before each repo/local group.
+// buildGroupedItems inserts groupItem separators before each top-level group.
 // Skills must be sorted by RelPath (tracked repos with "_" prefix sort first).
-// If all skills belong to a single group (e.g. all standalone), no separators are added.
+// Grouping follows skillTopGroup(): tracked entries group by their repo root;
+// local nested entries group by their first path segment; flat locals fall
+// into "standalone". When items contain mixed kinds (skills + agents), the
+// kind is included in the key so they stay in separate blocks.
 func buildGroupedItems(skills []skillItem) []list.Item {
 	// Check if there are multiple groups.
 	groups := map[string]bool{}
+	hasMultiKinds := false
 	for _, s := range skills {
-		groups[s.entry.RepoName] = true
-		if len(groups) > 1 {
-			break
+		groups[s.entry.Kind+"\x00"+skillTopGroup(s.entry)] = true
+		if !hasMultiKinds && len(skills) > 0 && s.entry.Kind != skills[0].entry.Kind {
+			hasMultiKinds = true
 		}
 	}
 
@@ -357,12 +375,21 @@ func buildGroupedItems(skills []skillItem) []list.Item {
 	}
 
 	for _, s := range skills {
-		key := s.entry.RepoName // "" for local
+		top := skillTopGroup(s.entry)
+		key := s.entry.Kind + "\x00" + top
 		if key != currentGroup {
 			flush()
 			label := "standalone"
-			if key != "" {
-				label = strings.TrimPrefix(key, "_")
+			if top != "" {
+				label = strings.TrimPrefix(top, "_")
+			}
+			// Prefix with kind when mixed to visually separate skills/agents
+			if hasMultiKinds {
+				kindPrefix := "Skills"
+				if s.entry.Kind == "agent" {
+					kindPrefix = "Agents"
+				}
+				label = kindPrefix + " · " + label
 			}
 			items = append(items, groupItem{label: label})
 			currentGroup = key

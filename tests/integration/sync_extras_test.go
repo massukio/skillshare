@@ -45,7 +45,7 @@ extras:
 	result := sb.RunCLI("sync", "extras")
 
 	result.AssertSuccess(t)
-	result.AssertAnyOutputContains(t, "Sync Extras")
+	result.AssertAnyOutputContains(t, "Syncing extras")
 	result.AssertAnyOutputContains(t, "2 files")
 
 	// Verify files are symlinks
@@ -99,7 +99,7 @@ extras:
 	result := sb.RunCLI("sync", "extras")
 
 	result.AssertSuccess(t)
-	result.AssertAnyOutputContains(t, "Sync Extras")
+	result.AssertAnyOutputContains(t, "Syncing extras")
 
 	// Verify file exists and is a real copy (not a symlink)
 	copiedFile := filepath.Join(rulesTarget, "coding.md")
@@ -226,7 +226,7 @@ extras:
 	result.AssertAnyOutputContains(t, "merged")
 
 	// Verify extras sync happened
-	result.AssertAnyOutputContains(t, "Sync Extras")
+	result.AssertAnyOutputContains(t, "Syncing extras")
 
 	// Verify skill symlink
 	if !sb.IsSymlink(filepath.Join(targetPath, "my-skill")) {
@@ -518,5 +518,326 @@ extras:
 	content := sb.ReadFile(sb.ConfigPath)
 	if !strings.Contains(content, "flatten: true") {
 		t.Error("config should contain flatten: true")
+	}
+}
+
+// --- Extras "agents" overlap with agents sync ---
+
+func TestSyncExtras_AgentsOverlap_Skipped(t *testing.T) {
+	sb := testutil.NewSandbox(t)
+	defer sb.Cleanup()
+
+	sb.CreateSkill("placeholder", map[string]string{
+		"SKILL.md": "# Placeholder",
+	})
+	targetPath := sb.CreateTarget("claude")
+
+	// Create agents source with a real agent (the regular agents sync system)
+	agentsDir := filepath.Join(filepath.Dir(sb.SourcePath), "agents")
+	os.MkdirAll(agentsDir, 0755)
+	os.WriteFile(filepath.Join(agentsDir, "helper.md"), []byte("# Helper Agent"), 0644)
+
+	// Create extras source for "agents" with a file
+	sourceRoot := filepath.Dir(sb.SourcePath)
+	extrasAgentsSource := filepath.Join(sourceRoot, "extras", "agents")
+	os.MkdirAll(extrasAgentsSource, 0755)
+	os.WriteFile(filepath.Join(extrasAgentsSource, "extra-agent.md"), []byte("# Extra Agent"), 0644)
+
+	claudeAgents := filepath.Join(sb.Home, ".claude", "agents")
+	os.MkdirAll(claudeAgents, 0755)
+
+	sb.WriteConfig(`source: ` + sb.SourcePath + `
+targets:
+  claude:
+    skills:
+      path: ` + targetPath + `
+    agents:
+      path: ` + claudeAgents + `
+extras:
+  - name: agents
+    targets:
+      - path: ` + claudeAgents + `
+`)
+
+	result := sb.RunCLI("sync", "extras")
+	result.AssertSuccess(t)
+	result.AssertAnyOutputContains(t, "Skipping extras")
+	result.AssertAnyOutputContains(t, "already managed by agents sync")
+}
+
+func TestSyncExtras_AgentsOverlap_NoAgentsSource(t *testing.T) {
+	sb := testutil.NewSandbox(t)
+	defer sb.Cleanup()
+
+	sb.CreateSkill("placeholder", map[string]string{
+		"SKILL.md": "# Placeholder",
+	})
+	targetPath := sb.CreateTarget("claude")
+
+	// NO agents source directory — extras "agents" should sync normally
+	sourceRoot := filepath.Dir(sb.SourcePath)
+	extrasAgentsSource := filepath.Join(sourceRoot, "extras", "agents")
+	os.MkdirAll(extrasAgentsSource, 0755)
+	os.WriteFile(filepath.Join(extrasAgentsSource, "extra-agent.md"), []byte("# Extra Agent"), 0644)
+
+	claudeAgents := filepath.Join(sb.Home, ".claude", "agents")
+	os.MkdirAll(claudeAgents, 0755)
+
+	sb.WriteConfig(`source: ` + sb.SourcePath + `
+targets:
+  claude:
+    skills:
+      path: ` + targetPath + `
+    agents:
+      path: ` + claudeAgents + `
+extras:
+  - name: agents
+    targets:
+      - path: ` + claudeAgents + `
+`)
+
+	result := sb.RunCLI("sync", "extras")
+	result.AssertSuccess(t)
+	result.AssertOutputNotContains(t, "Skipping extras")
+
+	// Extras agent file should be synced normally
+	if !sb.FileExists(filepath.Join(claudeAgents, "extra-agent.md")) {
+		t.Error("extra-agent.md should be synced when no agents source exists")
+	}
+}
+
+func TestSyncExtras_AgentsOverlap_PartialSkip(t *testing.T) {
+	sb := testutil.NewSandbox(t)
+	defer sb.Cleanup()
+
+	sb.CreateSkill("placeholder", map[string]string{
+		"SKILL.md": "# Placeholder",
+	})
+	targetPath := sb.CreateTarget("claude")
+
+	// Create agents source
+	agentsDir := filepath.Join(filepath.Dir(sb.SourcePath), "agents")
+	os.MkdirAll(agentsDir, 0755)
+	os.WriteFile(filepath.Join(agentsDir, "helper.md"), []byte("# Helper Agent"), 0644)
+
+	// Create extras "agents" source
+	sourceRoot := filepath.Dir(sb.SourcePath)
+	extrasAgentsSource := filepath.Join(sourceRoot, "extras", "agents")
+	os.MkdirAll(extrasAgentsSource, 0755)
+	os.WriteFile(filepath.Join(extrasAgentsSource, "extra-agent.md"), []byte("# Extra Agent"), 0644)
+
+	claudeAgents := filepath.Join(sb.Home, ".claude", "agents")
+	customTarget := filepath.Join(sb.Home, "custom-agents")
+	os.MkdirAll(claudeAgents, 0755)
+	os.MkdirAll(customTarget, 0755)
+
+	// Two targets: one overlaps with agents, one doesn't
+	sb.WriteConfig(`source: ` + sb.SourcePath + `
+targets:
+  claude:
+    skills:
+      path: ` + targetPath + `
+    agents:
+      path: ` + claudeAgents + `
+extras:
+  - name: agents
+    targets:
+      - path: ` + claudeAgents + `
+      - path: ` + customTarget + `
+`)
+
+	result := sb.RunCLI("sync", "extras")
+	result.AssertSuccess(t)
+
+	// Overlapping target should be skipped
+	result.AssertAnyOutputContains(t, "Skipping extras")
+
+	// Non-overlapping target should be synced
+	if !sb.FileExists(filepath.Join(customTarget, "extra-agent.md")) {
+		t.Error("extra-agent.md should be synced to non-overlapping target")
+	}
+}
+
+func TestSyncExtras_AgentsOverlap_NonAgentsNameNotSkipped(t *testing.T) {
+	sb := testutil.NewSandbox(t)
+	defer sb.Cleanup()
+
+	sb.CreateSkill("placeholder", map[string]string{
+		"SKILL.md": "# Placeholder",
+	})
+	targetPath := sb.CreateTarget("claude")
+
+	// Create agents source (real agents system active)
+	agentsDir := filepath.Join(filepath.Dir(sb.SourcePath), "agents")
+	os.MkdirAll(agentsDir, 0755)
+	os.WriteFile(filepath.Join(agentsDir, "helper.md"), []byte("# Helper Agent"), 0644)
+
+	// Create extras "rules" that targets the agents directory
+	sourceRoot := filepath.Dir(sb.SourcePath)
+	rulesSource := filepath.Join(sourceRoot, "extras", "rules")
+	os.MkdirAll(rulesSource, 0755)
+	os.WriteFile(filepath.Join(rulesSource, "rule.md"), []byte("# Rule"), 0644)
+
+	claudeAgents := filepath.Join(sb.Home, ".claude", "agents")
+	os.MkdirAll(claudeAgents, 0755)
+
+	// extras "rules" targets the same path as agents — should NOT be skipped (name != "agents")
+	sb.WriteConfig(`source: ` + sb.SourcePath + `
+targets:
+  claude:
+    skills:
+      path: ` + targetPath + `
+    agents:
+      path: ` + claudeAgents + `
+extras:
+  - name: rules
+    targets:
+      - path: ` + claudeAgents + `
+`)
+
+	result := sb.RunCLI("sync", "extras")
+	result.AssertSuccess(t)
+	result.AssertOutputNotContains(t, "Skipping extras")
+
+	if !sb.FileExists(filepath.Join(claudeAgents, "rule.md")) {
+		t.Error("rule.md should be synced — extras named 'rules' should not be affected by agents overlap")
+	}
+}
+
+func TestSyncExtras_AgentsOverlap_NoTargetOverlap(t *testing.T) {
+	sb := testutil.NewSandbox(t)
+	defer sb.Cleanup()
+
+	sb.CreateSkill("placeholder", map[string]string{
+		"SKILL.md": "# Placeholder",
+	})
+	targetPath := sb.CreateTarget("claude")
+
+	// Create agents source
+	agentsDir := filepath.Join(filepath.Dir(sb.SourcePath), "agents")
+	os.MkdirAll(agentsDir, 0755)
+	os.WriteFile(filepath.Join(agentsDir, "helper.md"), []byte("# Helper Agent"), 0644)
+
+	// Create extras "agents" source targeting a DIFFERENT path
+	sourceRoot := filepath.Dir(sb.SourcePath)
+	extrasAgentsSource := filepath.Join(sourceRoot, "extras", "agents")
+	os.MkdirAll(extrasAgentsSource, 0755)
+	os.WriteFile(filepath.Join(extrasAgentsSource, "extra-agent.md"), []byte("# Extra Agent"), 0644)
+
+	claudeAgents := filepath.Join(sb.Home, ".claude", "agents")
+	customTarget := filepath.Join(sb.Home, "my-agents")
+	os.MkdirAll(customTarget, 0755)
+
+	sb.WriteConfig(`source: ` + sb.SourcePath + `
+targets:
+  claude:
+    skills:
+      path: ` + targetPath + `
+    agents:
+      path: ` + claudeAgents + `
+extras:
+  - name: agents
+    targets:
+      - path: ` + customTarget + `
+`)
+
+	result := sb.RunCLI("sync", "extras")
+	result.AssertSuccess(t)
+	result.AssertOutputNotContains(t, "Skipping extras")
+
+	if !sb.FileExists(filepath.Join(customTarget, "extra-agent.md")) {
+		t.Error("extra-agent.md should be synced to non-overlapping target")
+	}
+}
+
+func TestSyncAll_AgentsExtrasOverlap_WarnsAndPreservesAgents_Global(t *testing.T) {
+	sb := testutil.NewSandbox(t)
+	defer sb.Cleanup()
+
+	sb.CreateSkill("placeholder", map[string]string{
+		"SKILL.md": "# Placeholder",
+	})
+	targetPath := sb.CreateTarget("claude")
+
+	agentsDir := filepath.Join(filepath.Dir(sb.SourcePath), "agents")
+	os.MkdirAll(agentsDir, 0755)
+	os.WriteFile(filepath.Join(agentsDir, "demo.md"), []byte("# Demo Agent"), 0644)
+
+	sourceRoot := filepath.Dir(sb.SourcePath)
+	extrasAgentsSource := filepath.Join(sourceRoot, "extras", "agents")
+	os.MkdirAll(extrasAgentsSource, 0755)
+	os.WriteFile(filepath.Join(extrasAgentsSource, "extra-agent.md"), []byte("# Extra Agent"), 0644)
+
+	claudeAgents := filepath.Join(sb.Home, ".claude", "agents")
+	os.MkdirAll(claudeAgents, 0755)
+
+	sb.WriteConfig(`source: ` + sb.SourcePath + `
+targets:
+  claude:
+    path: ` + targetPath + `
+extras:
+  - name: agents
+    targets:
+      - path: ` + claudeAgents + `
+`)
+
+	result := sb.RunCLI("sync", "--all")
+	result.AssertSuccess(t)
+	result.AssertAnyOutputContains(t, "Skipping extras")
+	result.AssertAnyOutputContains(t, "already managed by agents sync")
+
+	if !sb.IsSymlink(filepath.Join(claudeAgents, "demo.md")) {
+		t.Error("demo agent should remain synced in global mode")
+	}
+	if sb.FileExists(filepath.Join(claudeAgents, "extra-agent.md")) {
+		t.Error("extras agent file should not be synced when target overlaps agents sync")
+	}
+}
+
+func TestSyncAll_AgentsExtrasOverlap_WarnsAndPreservesAgents_Project(t *testing.T) {
+	sb := testutil.NewSandbox(t)
+	defer sb.Cleanup()
+
+	projectRoot := sb.SetupProjectDir("claude", "cursor")
+
+	projectAgents := filepath.Join(projectRoot, ".skillshare", "agents")
+	os.MkdirAll(projectAgents, 0755)
+	os.WriteFile(filepath.Join(projectAgents, "demo.md"), []byte("# Demo Agent"), 0644)
+
+	projectExtrasAgents := filepath.Join(projectRoot, ".skillshare", "extras", "agents")
+	os.MkdirAll(projectExtrasAgents, 0755)
+	os.WriteFile(filepath.Join(projectExtrasAgents, "extra-agent.md"), []byte("# Extra Agent"), 0644)
+
+	claudeAgents := filepath.Join(projectRoot, ".claude", "agents")
+	cursorAgents := filepath.Join(projectRoot, ".cursor", "agents")
+	os.MkdirAll(claudeAgents, 0755)
+	os.MkdirAll(cursorAgents, 0755)
+
+	sb.WriteProjectConfig(projectRoot, `targets:
+  - claude
+  - cursor
+extras:
+  - name: agents
+    targets:
+      - path: .claude/agents
+      - path: .cursor/agents
+`)
+
+	result := sb.RunCLIInDir(projectRoot, "sync", "--all", "-p")
+	result.AssertSuccess(t)
+	result.AssertAnyOutputContains(t, "Skipping extras")
+	result.AssertAnyOutputContains(t, "already managed by agents sync")
+
+	if !sb.IsSymlink(filepath.Join(claudeAgents, "demo.md")) {
+		t.Error("claude demo agent should remain synced in project mode")
+	}
+	if !sb.IsSymlink(filepath.Join(cursorAgents, "demo.md")) {
+		t.Error("cursor demo agent should remain synced in project mode")
+	}
+	if sb.FileExists(filepath.Join(claudeAgents, "extra-agent.md")) {
+		t.Error("project extras agent file should not be synced to claude when target overlaps agents sync")
+	}
+	if sb.FileExists(filepath.Join(cursorAgents, "extra-agent.md")) {
+		t.Error("project extras agent file should not be synced to cursor when target overlaps agents sync")
 	}
 }

@@ -9,9 +9,9 @@ import (
 	"strings"
 	"time"
 
-	"skillshare/internal/config"
 	"skillshare/internal/git"
 	"skillshare/internal/install"
+	"skillshare/internal/resource"
 	"skillshare/internal/sync"
 	"skillshare/internal/trash"
 	"skillshare/internal/utils"
@@ -19,6 +19,7 @@ import (
 
 type skillItem struct {
 	Name        string   `json:"name"`
+	Kind        string   `json:"kind"` // "skill" or "agent"
 	FlatName    string   `json:"flatName"`
 	RelPath     string   `json:"relPath"`
 	SourcePath  string   `json:"sourcePath"`
@@ -44,118 +45,231 @@ func enrichSkillBranch(item *skillItem) {
 }
 
 func (s *Server) handleListSkills(w http.ResponseWriter, r *http.Request) {
+	kindFilter := r.URL.Query().Get("kind") // "", "skill", "agent"
+
 	// Snapshot config under RLock, then release before I/O.
 	s.mu.RLock()
 	source := s.cfg.Source
+	agentsSource := s.agentsSource()
 	s.mu.RUnlock()
 
-	discovered, err := sync.DiscoverSourceSkillsAll(source)
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, err.Error())
-		return
-	}
+	var items []skillItem
 
-	items := make([]skillItem, 0, len(discovered))
-	for _, d := range discovered {
-		item := skillItem{
-			Name:       filepath.Base(d.SourcePath),
-			FlatName:   d.FlatName,
-			RelPath:    d.RelPath,
-			SourcePath: d.SourcePath,
-			IsInRepo:   d.IsInRepo,
-			Targets:    d.Targets,
-			Disabled:   d.Disabled,
+	// Skills
+	if kindFilter == "" || kindFilter == "skill" {
+		discovered, err := sync.DiscoverSourceSkillsAll(source)
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, err.Error())
+			return
 		}
 
-		// Enrich with metadata if available
-		if meta, _ := install.ReadMeta(d.SourcePath); meta != nil {
-			item.InstalledAt = meta.InstalledAt.Format("2006-01-02T15:04:05Z")
-			item.Source = meta.Source
-			item.Type = meta.Type
-			item.RepoURL = meta.RepoURL
-			item.Version = meta.Version
-			item.Branch = meta.Branch
-		}
-		enrichSkillBranch(&item)
+		for _, d := range discovered {
+			item := skillItem{
+				Name:       filepath.Base(d.SourcePath),
+				Kind:       "skill",
+				FlatName:   d.FlatName,
+				RelPath:    d.RelPath,
+				SourcePath: d.SourcePath,
+				IsInRepo:   d.IsInRepo,
+				Targets:    d.Targets,
+				Disabled:   d.Disabled,
+			}
 
-		items = append(items, item)
+			if entry := s.skillsStore.GetByPath(d.RelPath); entry != nil {
+				if !entry.InstalledAt.IsZero() {
+					item.InstalledAt = entry.InstalledAt.Format(time.RFC3339)
+				}
+				item.Source = entry.Source
+				item.Type = entry.Type
+				item.RepoURL = entry.RepoURL
+				item.Version = entry.Version
+				item.Branch = entry.Branch
+			}
+			enrichSkillBranch(&item)
+
+			items = append(items, item)
+		}
 	}
 
-	writeJSON(w, map[string]any{"skills": items})
+	// Agents — recursive discovery (supports --into subdirectories)
+	if (kindFilter == "" || kindFilter == "agent") && agentsSource != "" {
+		discovered, _ := resource.AgentKind{}.Discover(agentsSource)
+		for _, d := range discovered {
+			item := skillItem{
+				Name:       d.Name,
+				Kind:       "agent",
+				FlatName:   d.FlatName,
+				RelPath:    d.RelPath,
+				SourcePath: d.SourcePath,
+				IsInRepo:   d.IsInRepo,
+				Disabled:   d.Disabled,
+				Targets:    d.Targets,
+			}
+
+			// Read from centralized agents metadata store
+			agentKey := strings.TrimSuffix(d.RelPath, ".md")
+			if entry := s.agentsStore.GetByPath(agentKey); entry != nil {
+				if !entry.InstalledAt.IsZero() {
+					item.InstalledAt = entry.InstalledAt.Format(time.RFC3339)
+				}
+				item.Source = entry.Source
+				item.Type = entry.Type
+				item.RepoURL = entry.RepoURL
+				item.Version = entry.Version
+			} else if d.RepoRelPath != "" {
+				repoPath := filepath.Join(agentsSource, filepath.FromSlash(d.RepoRelPath))
+				if repoURL, err := git.GetRemoteURL(repoPath); err == nil {
+					item.Source = repoURL
+					item.RepoURL = repoURL
+				}
+				if version, err := git.GetCurrentFullHash(repoPath); err == nil {
+					item.Version = version
+				}
+			}
+
+			items = append(items, item)
+		}
+	}
+
+	writeJSON(w, map[string]any{"resources": items})
 }
 
 func (s *Server) handleGetSkill(w http.ResponseWriter, r *http.Request) {
 	// Snapshot config under RLock, then release before I/O.
 	s.mu.RLock()
 	source := s.cfg.Source
+	agentsSource := s.agentsSource()
 	s.mu.RUnlock()
 
 	name := r.PathValue("name")
-
-	// Find the skill by flat name or base name
-	discovered, err := sync.DiscoverSourceSkillsAll(source)
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, err.Error())
+	kind := r.URL.Query().Get("kind")
+	if kind != "" && kind != "skill" && kind != "agent" {
+		writeError(w, http.StatusBadRequest, "invalid kind: "+kind)
 		return
 	}
 
-	for _, d := range discovered {
-		baseName := filepath.Base(d.SourcePath)
-		if d.FlatName != name && baseName != name {
-			continue
+	// Find the skill by flat name or base name
+	if kind != "agent" {
+		discovered, err := sync.DiscoverSourceSkillsAll(source)
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, err.Error())
+			return
 		}
 
-		item := skillItem{
-			Name:       baseName,
-			FlatName:   d.FlatName,
-			RelPath:    d.RelPath,
-			SourcePath: d.SourcePath,
-			IsInRepo:   d.IsInRepo,
-			Targets:    d.Targets,
-			Disabled:   d.Disabled,
-		}
+		for _, d := range discovered {
+			baseName := filepath.Base(d.SourcePath)
+			if d.FlatName != name && baseName != name {
+				continue
+			}
 
-		if meta, _ := install.ReadMeta(d.SourcePath); meta != nil {
-			item.InstalledAt = meta.InstalledAt.Format("2006-01-02T15:04:05Z")
-			item.Source = meta.Source
-			item.Type = meta.Type
-			item.RepoURL = meta.RepoURL
-			item.Version = meta.Version
-			item.Branch = meta.Branch
-		}
-		enrichSkillBranch(&item)
+			item := skillItem{
+				Name:       baseName,
+				Kind:       "skill",
+				FlatName:   d.FlatName,
+				RelPath:    d.RelPath,
+				SourcePath: d.SourcePath,
+				IsInRepo:   d.IsInRepo,
+				Targets:    d.Targets,
+				Disabled:   d.Disabled,
+			}
 
-		// Read SKILL.md content
-		skillMdContent := ""
-		skillMdPath := filepath.Join(d.SourcePath, "SKILL.md")
-		if data, err := os.ReadFile(skillMdPath); err == nil {
-			skillMdContent = string(data)
-		}
+			if entry := s.skillsStore.GetByPath(d.RelPath); entry != nil {
+				if !entry.InstalledAt.IsZero() {
+					item.InstalledAt = entry.InstalledAt.Format(time.RFC3339)
+				}
+				item.Source = entry.Source
+				item.Type = entry.Type
+				item.RepoURL = entry.RepoURL
+				item.Version = entry.Version
+				item.Branch = entry.Branch
+			}
+			enrichSkillBranch(&item)
 
-		// List all files in the skill directory
-		files := make([]string, 0)
-		filepath.Walk(d.SourcePath, func(path string, info os.FileInfo, err error) error {
-			if err != nil {
+			// Read SKILL.md content
+			skillMdContent := ""
+			skillMdPath := filepath.Join(d.SourcePath, "SKILL.md")
+			if data, err := os.ReadFile(skillMdPath); err == nil {
+				skillMdContent = string(data)
+			}
+
+			// List all files in the skill directory
+			files := make([]string, 0)
+			filepath.Walk(d.SourcePath, func(path string, info os.FileInfo, err error) error {
+				if err != nil {
+					return nil
+				}
+				if info.IsDir() && utils.IsHidden(info.Name()) {
+					return filepath.SkipDir
+				}
+				if !info.IsDir() {
+					rel, _ := filepath.Rel(d.SourcePath, path)
+					// Normalize separators
+					rel = strings.ReplaceAll(rel, "\\", "/")
+					files = append(files, rel)
+				}
 				return nil
-			}
-			if info.IsDir() && utils.IsHidden(info.Name()) {
-				return filepath.SkipDir
-			}
-			if !info.IsDir() {
-				rel, _ := filepath.Rel(d.SourcePath, path)
-				// Normalize separators
-				rel = strings.ReplaceAll(rel, "\\", "/")
-				files = append(files, rel)
-			}
-			return nil
-		})
+			})
 
-		writeJSON(w, map[string]any{
-			"skill":          item,
-			"skillMdContent": skillMdContent,
-			"files":          files,
-		})
-		return
+			writeJSON(w, map[string]any{
+				"resource":       item,
+				"skillMdContent": skillMdContent,
+				"files":          files,
+			})
+			return
+		}
+	}
+
+	// Fallback: check agents source (recursive — supports --into subdirectories)
+	if kind != "skill" && agentsSource != "" {
+		agentDiscovered, _ := resource.AgentKind{}.Discover(agentsSource)
+		for _, d := range agentDiscovered {
+			if !matchesAgentName(d, name) {
+				continue
+			}
+
+			data, readErr := os.ReadFile(d.SourcePath)
+			if readErr != nil {
+				continue
+			}
+
+			item := skillItem{
+				Name:       d.Name,
+				Kind:       "agent",
+				FlatName:   d.FlatName,
+				RelPath:    d.RelPath,
+				SourcePath: d.SourcePath,
+				IsInRepo:   d.IsInRepo,
+				Disabled:   d.Disabled,
+				Targets:    d.Targets,
+			}
+
+			agentKey := strings.TrimSuffix(d.RelPath, ".md")
+			if entry := s.agentsStore.GetByPath(agentKey); entry != nil {
+				if !entry.InstalledAt.IsZero() {
+					item.InstalledAt = entry.InstalledAt.Format(time.RFC3339)
+				}
+				item.Source = entry.Source
+				item.Type = entry.Type
+				item.RepoURL = entry.RepoURL
+				item.Version = entry.Version
+			} else if d.RepoRelPath != "" {
+				repoPath := filepath.Join(agentsSource, filepath.FromSlash(d.RepoRelPath))
+				if repoURL, err := git.GetRemoteURL(repoPath); err == nil {
+					item.Source = repoURL
+					item.RepoURL = repoURL
+				}
+				if version, err := git.GetCurrentFullHash(repoPath); err == nil {
+					item.Version = version
+				}
+			}
+
+			writeJSON(w, map[string]any{
+				"resource":       item,
+				"skillMdContent": string(data),
+				"files":          []string{filepath.Base(d.RelPath)},
+			})
+			return
+		}
 	}
 
 	writeError(w, http.StatusNotFound, "skill not found: "+name)
@@ -266,7 +380,7 @@ func (s *Server) handleUninstallRepo(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Prune registry entries: the repo itself + skills belonging to it.
+	// Prune store entries: the repo itself + skills belonging to it.
 	// Legacy entries use Group without "_" prefix (e.g., "team-skills" for repo "_team-skills").
 	// Only apply legacy matching for top-level repos (no "/" in repoName) to avoid
 	// basename collisions between sibling nested repos like org/_team-skills vs dept/_team-skills.
@@ -274,35 +388,35 @@ func (s *Server) handleUninstallRepo(w http.ResponseWriter, r *http.Request) {
 	if !strings.Contains(repoName, "/") {
 		legacyGroup = strings.TrimPrefix(repoName, "_")
 	}
-	filtered := make([]config.SkillEntry, 0, len(s.registry.Skills))
-	for _, entry := range s.registry.Skills {
-		fullName := entry.FullName()
+	for _, name := range s.skillsStore.List() {
+		entry := s.skillsStore.Get(name)
+		if entry == nil {
+			continue
+		}
 		// Match the repo's own entry (e.g., "_team-skills" or "org/_team-skills")
-		if fullName == repoName {
+		if name == repoName {
+			s.skillsStore.Remove(name)
 			continue
 		}
 		// Match tracked skills grouped under this repo (exact group match)
 		if entry.Tracked && entry.Group == repoName {
+			s.skillsStore.Remove(name)
 			continue
 		}
 		// Match legacy grouped entries (top-level repos only, e.g., group="team-skills")
 		if legacyGroup != "" && entry.Tracked && entry.Group == legacyGroup {
+			s.skillsStore.Remove(name)
 			continue
 		}
 		// Match nested members (e.g., "org/_team-skills/sub-skill")
-		if strings.HasPrefix(fullName, repoName+"/") {
+		if strings.HasPrefix(name, repoName+"/") {
+			s.skillsStore.Remove(name)
 			continue
 		}
-		filtered = append(filtered, entry)
 	}
-	s.registry.Skills = filtered
 
-	regDir := s.cfg.RegistryDir
-	if s.IsProjectMode() {
-		regDir = filepath.Join(s.projectRoot, ".skillshare")
-	}
-	if err := s.registry.Save(regDir); err != nil {
-		log.Printf("warning: failed to save registry after repo uninstall: %v", err)
+	if err := s.skillsStore.Save(s.cfg.Source); err != nil {
+		log.Printf("warning: failed to save metadata after repo uninstall: %v", err)
 	}
 
 	s.writeOpsLog("uninstall", "ok", start, map[string]any{
@@ -320,6 +434,47 @@ func (s *Server) handleUninstallSkill(w http.ResponseWriter, r *http.Request) {
 	defer s.mu.Unlock()
 
 	name := r.PathValue("name")
+	kind := r.URL.Query().Get("kind")
+	if kind != "" && kind != "skill" && kind != "agent" {
+		writeError(w, http.StatusBadRequest, "invalid kind: "+kind)
+		return
+	}
+
+	if kind == "agent" {
+		agentsSource := s.agentsSource()
+		if agentsSource == "" {
+			writeError(w, http.StatusNotFound, "agent not found: "+name)
+			return
+		}
+		agent, err := resolveAgentResource(agentsSource, name)
+		if err != nil {
+			writeError(w, http.StatusNotFound, err.Error())
+			return
+		}
+
+		displayName := agentMetaKey(agent.RelPath)
+		legacySidecar := filepath.Join(filepath.Dir(agent.SourcePath), filepath.Base(displayName)+".skillshare-meta.json")
+		if _, err := trash.MoveAgentToTrash(agent.SourcePath, legacySidecar, displayName, s.agentTrashBase()); err != nil {
+			writeError(w, http.StatusInternalServerError, "failed to trash agent: "+err.Error())
+			return
+		}
+
+		if s.agentsStore != nil {
+			s.agentsStore.Remove(displayName)
+			if err := s.agentsStore.Save(agentsSource); err != nil {
+				log.Printf("warning: failed to save agent metadata after uninstall: %v", err)
+			}
+		}
+
+		s.writeOpsLog("uninstall", "ok", start, map[string]any{
+			"name":  displayName,
+			"type":  "agent",
+			"scope": "ui",
+		}, "")
+
+		writeJSON(w, map[string]any{"success": true, "name": displayName, "movedToTrash": true})
+		return
+	}
 
 	// Find skill path
 	discovered, err := sync.DiscoverSourceSkills(s.cfg.Source)

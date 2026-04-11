@@ -1,5 +1,5 @@
 ---
-sidebar_position: 8
+sidebar_position: 9
 ---
 
 # Audit Engine
@@ -100,7 +100,7 @@ These patterns are **suspicious in context** — they may be legitimate but dese
 
 ### MEDIUM: Content Integrity
 
-Skills installed or updated via `skillshare install` or `skillshare update` have their file hashes recorded in `.skillshare-meta.json`. On subsequent audits, the engine verifies content integrity:
+Skills installed or updated via `skillshare install` or `skillshare update` have their file hashes recorded in `.metadata.json`. On subsequent audits, the engine verifies content integrity:
 
 | Pattern | Severity | Description |
 |---------|----------|------------|
@@ -113,7 +113,7 @@ Skills installed or updated via `skillshare install` or `skillshare update` have
 
 ### MEDIUM: Metadata Trust Verification
 
-The `metadata` analyzer cross-references SKILL.md metadata against the actual git source URL from `.skillshare-meta.json` to detect social-engineering patterns in the supply chain:
+The `metadata` analyzer cross-references SKILL.md metadata against the actual git source URL from `.metadata.json` to detect social-engineering patterns in the supply chain:
 
 | Pattern | Severity | Description |
 |---------|----------|------------|
@@ -393,7 +393,7 @@ When analyzability drops below **70%**, the audit engine emits an `INFO`-level f
 Files excluded from the calculation:
 - Binary files (images, `.wasm`, etc.)
 - Files exceeding 1 MB
-- `.skillshare-meta.json` (internal metadata)
+- `.metadata.json` (internal metadata)
 
 ### Output
 

@@ -3,7 +3,7 @@ import Spinner from './Spinner';
 
 interface ButtonProps extends ButtonHTMLAttributes<HTMLButtonElement> {
   children: ReactNode;
-  variant?: 'primary' | 'secondary' | 'danger' | 'ghost' | 'link';
+  variant?: 'primary' | 'secondary' | 'danger' | 'warning' | 'ghost' | 'link';
   size?: 'xs' | 'sm' | 'md' | 'lg';
   loading?: boolean;
   ref?: Ref<HTMLButtonElement>;
@@ -13,6 +13,7 @@ const variantClasses = {
   primary: 'bg-pencil text-paper border-2 border-pencil hover:bg-pencil/85',
   secondary: 'bg-transparent text-pencil border-2 border-muted-dark hover:bg-muted/30 hover:border-pencil hover:shadow-sm',
   danger: 'bg-transparent text-danger border-2 border-danger hover:bg-danger hover:text-white',
+  warning: 'bg-transparent text-warning border-2 border-warning hover:bg-warning hover:text-white',
   ghost: 'bg-transparent text-pencil-light hover:text-pencil hover:bg-muted/30',
   link: 'bg-transparent text-pencil-light hover:text-pencil hover:underline border-none',
 };

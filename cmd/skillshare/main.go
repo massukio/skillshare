@@ -9,6 +9,7 @@ import (
 
 	"skillshare/internal/config"
 	"skillshare/internal/install"
+	"skillshare/internal/theme"
 	"skillshare/internal/ui"
 	versioncheck "skillshare/internal/version"
 )
@@ -51,6 +52,10 @@ var commands = map[string]func([]string) error{
 func main() {
 	// Clean up any leftover .old files from Windows self-upgrade
 	cleanupOldBinary()
+
+	// Resolve theme early so OSC 11 probe overhead happens at startup,
+	// not inside a TUI render loop.
+	_ = theme.Get()
 
 	// Migrate Windows legacy ~/.config/skillshare → %AppData%\skillshare
 	results := config.MigrateWindowsLegacyDir()
@@ -196,21 +201,21 @@ func printUsage() {
 	// Core Commands
 	fmt.Println("CORE COMMANDS")
 	cmd("init", "", "Initialize skillshare")
-	cmd("install", "<source>", "Install a skill from local path or git repo")
-	cmd("uninstall", "<name>...", "Remove skills from source directory")
-	cmd("list", "", "List all installed skills")
+	cmd("install", "<source>", "Install skills/agents from local path or git repo")
+	cmd("uninstall", "<name>...", "Remove skills/agents from source directory")
+	cmd("list", "[agents] [pattern] [--all]", "List installed skills (or agents)")
 	cmd("search", "[query]", "Search or browse GitHub for skills")
-	cmd("sync", "[extras] [--all]", "Sync skills (or extras) to targets")
+	cmd("sync", "[agents] [--all]", "Sync skills/agents/extras to targets")
 	cmd("status", "", "Show status of all targets")
 	fmt.Println()
 
-	// Skill Management
-	fmt.Println("SKILL MANAGEMENT")
+	// Skill & Agent Management
+	fmt.Println("SKILL & AGENT MANAGEMENT")
 	cmd("new", "<name>", "Create a new skill with SKILL.md template")
-	cmd("enable", "<name|pattern>", "Enable a disabled skill (remove from .skillignore)")
-	cmd("disable", "<name|pattern>", "Disable a skill (add to .skillignore)")
-	cmd("check", "", "Check for available updates")
-	cmd("update", "<name>", "Update a skill or tracked repository")
+	cmd("enable", "<name|pattern>", "Enable a disabled skill/agent")
+	cmd("disable", "<name|pattern>", "Disable a skill/agent")
+	cmd("check", "[agents] [--all]", "Check for available updates")
+	cmd("update", "[agents] <name>", "Update a skill/agent or tracked repository")
 	cmd("update", "--all", "Update all tracked repositories")
 	cmd("upgrade", "", "Upgrade CLI and/or skillshare skill")
 	fmt.Println()
@@ -220,16 +225,16 @@ func printUsage() {
 	cmd("target add", "<name> [path]", "Add a target (path optional in project mode)")
 	cmd("target remove", "<name>", "Unlink target and restore skills")
 	cmd("target list", "", "List all targets")
-	cmd("diff", "", "Show differences between source and targets")
+	cmd("diff", "[target]", "Show differences between source and targets")
 	fmt.Println()
 
 	// Sync & Backup
 	fmt.Println("SYNC & BACKUP")
-	cmd("collect", "[target]", "Collect local skills from target(s) to source")
+	cmd("collect", "[agents] [target]", "Collect local skills/agents from target(s)")
 	cmd("backup", "", "Create backup of target(s)")
 	cmd("restore", "<target>", "Restore target from latest backup")
-	cmd("trash", "list", "List trashed skills")
-	cmd("trash", "restore <name>", "Restore a skill from trash")
+	cmd("trash", "[agents] list", "List trashed skills/agents")
+	cmd("trash", "[agents] restore <name>", "Restore a skill/agent from trash")
 	fmt.Println()
 
 	// Extras
@@ -248,7 +253,7 @@ func printUsage() {
 
 	// Utilities
 	fmt.Println("UTILITIES")
-	cmd("audit", "[name]", "Scan skills for security threats")
+	cmd("audit", "[agents] [name]", "Scan skills/agents for security threats")
 	cmd("hub", "<subcommand>", "Manage hubs (add, list, remove, default, index)")
 	cmd("log", "", "View operation log")
 	cmd("tui", "[on|off]", "Toggle interactive TUI mode")
@@ -268,8 +273,12 @@ func printUsage() {
 	fmt.Println("EXAMPLES")
 	fmt.Println(g + "  skillshare status                                   # Check current state")
 	fmt.Println("  skillshare sync --dry-run                           # Preview before sync")
+	fmt.Println("  skillshare sync agents                              # Sync agents only")
+	fmt.Println("  skillshare sync --all                               # Sync skills + agents + extras")
+	fmt.Println("  skillshare list --all                               # List skills + agents")
 	fmt.Println("  skillshare collect claude                           # Import local skills")
 	fmt.Println("  skillshare install anthropics/skills/pdf -p         # Project install")
+	fmt.Println("  skillshare install repo -a my-agent                 # Install specific agent")
 	fmt.Println("  skillshare target add cursor -p                     # Project target")
 	fmt.Println("  skillshare push -m \"Add new skill\"                  # Push to remote")
 	fmt.Println("  skillshare pull                                     # Pull from remote")

@@ -9,13 +9,14 @@ Pick the scenario that matches your goal.
 
 ## Sync a skill to specific targets only
 
-Add a `targets` field (or `metadata.targets`) to the skill's SKILL.md frontmatter.
+Add `metadata.targets` (preferred) to the skill's SKILL.md frontmatter.
 The skill will only sync to the listed targets.
 
 ```yaml
 ---
 name: my-cursor-only-skill
-targets: [cursor]
+metadata:
+  targets: [cursor]
 ---
 ```
 

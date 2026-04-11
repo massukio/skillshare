@@ -85,7 +85,7 @@ func (s *Server) handleUpdateStream(w http.ResponseWriter, r *http.Request) {
 				})
 			}
 		}
-		skills, err := getServerUpdatableSkills(source)
+		skills, err := getServerUpdatableSkills(source, s.skillsStore)
 		if err == nil {
 			for _, skill := range skills {
 				items = append(items, updateItem{

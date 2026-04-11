@@ -21,7 +21,7 @@ export const queryKeys = {
   gitBranches: ['git-branches'] as const,
 
   audit: {
-    all: ['audit'] as const,
+    all: (kind?: string) => ['audit', kind ?? 'skills'] as const,
     skill: (name: string) => ['audit', 'skill', name] as const,
     rules: ['audit', 'rules'] as const,
     compiled: ['audit', 'rules', 'compiled'] as const,
@@ -41,6 +41,7 @@ export const queryKeys = {
   extrasDiff: (name?: string) => ['extras-diff', name ?? '__all'] as const,
   doctor: ['doctor'] as const,
   skillignore: ['skillignore'] as const,
+  agentignore: ['agentignore'] as const,
 };
 
 // Stale times per data type
@@ -56,10 +57,12 @@ export const staleTimes = {
   auditRules: 5 * 60 * 1000,  // 5min
   backups: 2 * 60 * 1000,     // 2min
   trash: 2 * 60 * 1000,       // 2min
+  audit: 5 * 60 * 1000,         // 5min — full audit scan, expensive
   auditSkill: 5 * 60 * 1000,   // 5min — per-skill audit, rarely changes
   check: 60 * 1000,            // 1min
   syncMatrix: 30 * 1000,       // 30s — changes after filter edits
   extras: 30 * 1000,        // 30s — fast-changing like diff
   doctor: 60 * 1000,        // 1min — health checks
   skillignore: 5 * 60 * 1000, // 5min — rarely changes
+  agentignore: 5 * 60 * 1000, // 5min — rarely changes
 };

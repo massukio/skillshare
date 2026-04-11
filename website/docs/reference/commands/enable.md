@@ -96,9 +96,27 @@ Disabled skills show a red **disabled** badge in the detail panel.
 
 The file is created automatically on first `disable`.
 
+## Agent Support
+
+Use `--kind agent` to enable or disable agents. This writes to `.agentignore` instead of `.skillignore`:
+
+```bash
+skillshare disable --kind agent draft-reviewer     # Disable an agent
+skillshare enable --kind agent draft-reviewer      # Re-enable an agent
+skillshare disable --kind agent "experimental-*"   # Disable by pattern
+```
+
+| Mode | `.agentignore` path |
+|------|---------------------|
+| Global | `~/.config/skillshare/agents/.agentignore` |
+| Project | `.skillshare/agents/.agentignore` |
+
+See [Agents](/docs/understand/agents) for background on agent management.
+
 ## See Also
 
 - [list](./list.md) — View disabled skills and toggle with `E` key
 - [Filtering Skills](/docs/how-to/daily-tasks/filtering-skills) — All filtering layers
 - [.skillignore](/docs/reference/filtering#skillignore) — Pattern syntax
 - [sync](./sync.md) — Apply changes after enable/disable
+- [Agents](/docs/understand/agents) — Agent concepts

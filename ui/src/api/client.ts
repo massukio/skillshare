@@ -117,6 +117,7 @@ export interface SyncMatrixEntry {
   target: string;
   status: 'synced' | 'excluded' | 'not_included' | 'skill_target_mismatch' | 'na';
   reason: string;
+  kind?: 'skill' | 'agent';
 }
 
 // Typed API helpers
@@ -124,29 +125,43 @@ export const api = {
   // Overview
   getOverview: () => apiFetch<Overview>('/overview'),
 
-  // Skills
-  listSkills: () => apiFetch<{ skills: Skill[] }>('/skills'),
-  getSkill: (name: string) =>
-    apiFetch<{ skill: Skill; skillMdContent: string; files: string[] }>(`/skills/${encodeURIComponent(name)}`),
-  deleteSkill: (name: string) =>
-    apiFetch<{ success: boolean }>(`/skills/${encodeURIComponent(name)}`, { method: 'DELETE' }),
-  disableSkill: (name: string) =>
+  // Resources (skills + agents)
+  listSkills: (kind?: 'skill' | 'agent') =>
+    apiFetch<{ resources: Skill[] }>(kind ? `/resources?kind=${kind}` : '/resources'),
+  getResource: (name: string, kind?: 'skill' | 'agent') =>
+    apiFetch<{ resource: Skill; skillMdContent: string; files: string[] }>(
+      `/resources/${encodeURIComponent(name)}${kind ? `?kind=${kind}` : ''}`
+    ),
+  getSkill: (name: string, kind?: 'skill' | 'agent') =>
+    api.getResource(name, kind),
+  deleteResource: (name: string, kind?: 'skill' | 'agent') =>
+    apiFetch<{ success: boolean }>(
+      `/resources/${encodeURIComponent(name)}${kind ? `?kind=${kind}` : ''}`,
+      { method: 'DELETE' }
+    ),
+  deleteSkill: (name: string, kind?: 'skill' | 'agent') =>
+    api.deleteResource(name, kind),
+  disableResource: (name: string, kind?: 'skill' | 'agent') =>
     apiFetch<{ success: boolean; name: string; disabled: boolean }>(
-      `/skills/${encodeURIComponent(name)}/disable`,
+      `/resources/${encodeURIComponent(name)}/disable${kind ? `?kind=${kind}` : ''}`,
       { method: 'POST' }
     ),
-  enableSkill: (name: string) =>
+  disableSkill: (name: string, kind?: 'skill' | 'agent') =>
+    api.disableResource(name, kind),
+  enableResource: (name: string, kind?: 'skill' | 'agent') =>
     apiFetch<{ success: boolean; name: string; disabled: boolean }>(
-      `/skills/${encodeURIComponent(name)}/enable`,
+      `/resources/${encodeURIComponent(name)}/enable${kind ? `?kind=${kind}` : ''}`,
       { method: 'POST' }
     ),
+  enableSkill: (name: string, kind?: 'skill' | 'agent') =>
+    api.enableResource(name, kind),
   batchUninstall: (opts: BatchUninstallRequest) =>
     apiFetch<BatchUninstallResult>('/uninstall/batch', {
       method: 'POST',
       body: JSON.stringify(opts),
     }),
   getTemplates: async () => {
-    const res = await apiFetch<TemplatesResponse>('/skills/templates');
+    const res = await apiFetch<TemplatesResponse>('/resources/templates');
     // Normalize: Go omits nil slices, so scaffoldDirs may be undefined
     for (const p of res.patterns) {
       if (!p.scaffoldDirs) p.scaffoldDirs = [];
@@ -154,31 +169,31 @@ export const api = {
     return res;
   },
   createSkill: (data: CreateSkillRequest) =>
-    apiFetch<CreateSkillResponse>('/skills', {
+    apiFetch<CreateSkillResponse>('/resources', {
       method: 'POST',
       body: JSON.stringify(data),
     }),
   batchSetTargets: (folder: string, target: string | null) =>
-    apiFetch<{ updated: number; skipped: number; errors: string[] }>('/skills/batch/targets', {
+    apiFetch<{ updated: number; skipped: number; errors: string[] }>('/resources/batch/targets', {
       method: 'POST',
       body: JSON.stringify({ folder, target: target ?? '' }),
     }),
   setSkillTargets: (name: string, target: string | null) =>
-    apiFetch<{ success: boolean }>(`/skills/${encodeURIComponent(name)}/targets`, {
+    apiFetch<{ success: boolean }>(`/resources/${encodeURIComponent(name)}/targets`, {
       method: 'PATCH',
       body: JSON.stringify({ target: target ?? '' }),
     }),
 
   // Targets
   listTargets: () => apiFetch<{ targets: Target[]; sourceSkillCount: number }>('/targets'),
-  addTarget: (name: string, path: string) =>
+  addTarget: (name: string, path: string, agentPath?: string) =>
     apiFetch<{ success: boolean }>('/targets', {
       method: 'POST',
-      body: JSON.stringify({ name, path }),
+      body: JSON.stringify({ name, path, ...(agentPath && { agentPath }) }),
     }),
   removeTarget: (name: string) =>
     apiFetch<{ success: boolean }>(`/targets/${encodeURIComponent(name)}`, { method: 'DELETE' }),
-  updateTarget: (name: string, opts: { include?: string[]; exclude?: string[]; mode?: string; target_naming?: string }) =>
+  updateTarget: (name: string, opts: { include?: string[]; exclude?: string[]; mode?: string; target_naming?: string; agent_mode?: string; agent_include?: string[]; agent_exclude?: string[] }) =>
     apiFetch<{ success: boolean }>(`/targets/${encodeURIComponent(name)}`, {
       method: 'PATCH',
       body: JSON.stringify(opts),
@@ -189,14 +204,20 @@ export const api = {
     apiFetch<{ entries: SyncMatrixEntry[] }>(
       `/sync-matrix${target ? '?target=' + encodeURIComponent(target) : ''}`
     ),
-  previewSyncMatrix: (target: string, include: string[], exclude: string[]) =>
+  previewSyncMatrix: (target: string, include: string[], exclude: string[], agentInclude?: string[], agentExclude?: string[]) =>
     apiFetch<{ entries: SyncMatrixEntry[] }>('/sync-matrix/preview', {
       method: 'POST',
-      body: JSON.stringify({ target, include, exclude }),
+      body: JSON.stringify({
+        target,
+        include,
+        exclude,
+        ...(agentInclude && { agent_include: agentInclude }),
+        ...(agentExclude && { agent_exclude: agentExclude }),
+      }),
     }),
 
   // Sync
-  sync: (opts: { dryRun?: boolean; force?: boolean }) =>
+  sync: (opts: { dryRun?: boolean; force?: boolean; kind?: 'skill' | 'agent' }) =>
     apiFetch<SyncResponse>('/sync', {
       method: 'POST',
       body: JSON.stringify(opts),
@@ -264,14 +285,14 @@ export const api = {
       method: 'POST',
       body: JSON.stringify(opts),
     }),
-  installBatch: (opts: { source: string; skills: DiscoveredSkill[]; force?: boolean; skipAudit?: boolean; into?: string; name?: string; branch?: string }) =>
+  installBatch: (opts: { source: string; skills: DiscoveredSkill[]; force?: boolean; skipAudit?: boolean; into?: string; name?: string; branch?: string; kind?: 'skill' | 'agent' }) =>
     apiFetch<BatchInstallResult>('/install/batch', {
       method: 'POST',
       body: JSON.stringify(opts),
     }),
 
   // Update
-  update: (opts: { name?: string; force?: boolean; all?: boolean; skipAudit?: boolean }) =>
+  update: (opts: { name?: string; kind?: 'skill' | 'agent'; force?: boolean; all?: boolean; skipAudit?: boolean }) =>
     apiFetch<{ results: UpdateResultItem[] }>('/update', {
       method: 'POST',
       body: JSON.stringify(opts),
@@ -300,12 +321,17 @@ export const api = {
 
   // Skill file content
   getSkillFile: (skillName: string, filepath: string) =>
-    apiFetch<SkillFileContent>(`/skills/${encodeURIComponent(skillName)}/files/${filepath}`),
+    apiFetch<SkillFileContent>(`/resources/${encodeURIComponent(skillName)}/files/${filepath}`),
 
   // Collect
-  collectScan: (target?: string) =>
-    apiFetch<CollectScanResult>(`/collect/scan${target ? '?target=' + encodeURIComponent(target) : ''}`),
-  collect: (opts: { skills: { name: string; targetName: string }[]; force?: boolean }) =>
+  collectScan: (target?: string, kind?: 'skill' | 'agent') => {
+    const params = new URLSearchParams();
+    if (target) params.set('target', target);
+    if (kind) params.set('kind', kind);
+    const qs = params.toString();
+    return apiFetch<CollectScanResult>(`/collect/scan${qs ? '?' + qs : ''}`);
+  },
+  collect: (opts: { skills: { name: string; targetName: string; kind?: string }[]; force?: boolean }) =>
     apiFetch<CollectResult>('/collect', {
       method: 'POST',
       body: JSON.stringify(opts),
@@ -345,12 +371,21 @@ export const api = {
 
   // Trash
   listTrash: () => apiFetch<TrashListResponse>('/trash'),
-  restoreTrash: (name: string) =>
-    apiFetch<{ success: boolean }>(`/trash/${encodeURIComponent(name)}/restore`, { method: 'POST' }),
-  deleteTrash: (name: string) =>
-    apiFetch<{ success: boolean }>(`/trash/${encodeURIComponent(name)}`, { method: 'DELETE' }),
-  emptyTrash: () =>
-    apiFetch<{ success: boolean; removed: number }>('/trash/empty', { method: 'POST' }),
+  restoreTrash: (name: string, kind?: 'skill' | 'agent') =>
+    apiFetch<{ success: boolean }>(
+      `/trash/${encodeURIComponent(name)}/restore${kind ? `?kind=${encodeURIComponent(kind)}` : ''}`,
+      { method: 'POST' },
+    ),
+  deleteTrash: (name: string, kind?: 'skill' | 'agent') =>
+    apiFetch<{ success: boolean }>(
+      `/trash/${encodeURIComponent(name)}${kind ? `?kind=${encodeURIComponent(kind)}` : ''}`,
+      { method: 'DELETE' },
+    ),
+  emptyTrash: (kind: 'skill' | 'agent' | 'all' = 'all') =>
+    apiFetch<{ success: boolean; removed: number }>(
+      `/trash/empty${kind ? `?kind=${encodeURIComponent(kind)}` : ''}`,
+      { method: 'POST' },
+    ),
 
   // Extras
   listExtras: () => apiFetch<{ extras: Extra[] }>('/extras'),
@@ -400,15 +435,18 @@ export const api = {
   },
 
   // Audit
-  auditAll: () => apiFetch<AuditAllResponse>('/audit'),
-  auditSkill: (name: string) => apiFetch<AuditSkillResponse>(`/audit/${encodeURIComponent(name)}`),
+  auditAll: (kind?: 'skills' | 'agents') =>
+    apiFetch<AuditAllResponse>(`/audit${kind ? '?kind=' + kind : ''}`),
+  auditSkill: (name: string, kind?: 'skill' | 'agent') =>
+    apiFetch<AuditSkillResponse>(`/audit/${encodeURIComponent(name)}${kind === 'agent' ? '?kind=agent' : ''}`),
   auditAllStream: (
     onStart: (total: number) => void,
     onProgress: (scanned: number) => void,
     onDone: (data: AuditAllResponse) => void,
     onError: (err: Error) => void,
+    kind?: 'skills' | 'agents',
   ): EventSource =>
-    createSSEStream(BASE + '/audit/stream', {
+    createSSEStream(BASE + `/audit/stream${kind ? '?kind=' + kind : ''}`, {
       start: (d) => onStart(d.total),
       progress: (d) => onProgress(d.scanned),
       done: onDone,
@@ -469,6 +507,14 @@ export const api = {
       method: 'PUT',
       body: JSON.stringify({ raw }),
     }),
+
+  // Agentignore
+  getAgentignore: () => apiFetch<AgentignoreResponse>('/agentignore'),
+  putAgentignore: (raw: string) =>
+    apiFetch<{ success: boolean }>('/agentignore', {
+      method: 'PUT',
+      body: JSON.stringify({ raw }),
+    }),
 };
 
 // Types
@@ -480,7 +526,10 @@ export interface TrackedRepo {
 
 export interface Overview {
   source: string;
+  agentsSource?: string;
+  extrasSource?: string;
   skillCount: number;
+  agentCount: number;
   topLevelCount: number;
   targetCount: number;
   mode: string;
@@ -501,6 +550,7 @@ export interface VersionCheck {
 
 export interface Skill {
   name: string;
+  kind: 'skill' | 'agent';
   flatName: string;
   relPath: string;
   sourcePath: string;
@@ -561,6 +611,12 @@ export interface Target {
   expectedSkillCount: number;
   skippedSkillCount?: number;
   collisionCount?: number;
+  agentPath?: string;
+  agentMode?: string;
+  agentInclude?: string[];
+  agentExclude?: string[];
+  agentLinkedCount?: number;
+  agentExpectedCount?: number;
 }
 
 export interface SyncResult {
@@ -577,6 +633,9 @@ export interface IgnoreSources {
   ignored_skills: string[];
   ignore_root: string;
   ignore_repos: string[];
+  agent_ignore_root?: string;
+  agent_ignored_count?: number;
+  agent_ignored_skills?: string[];
 }
 
 export interface SyncResponse extends IgnoreSources {
@@ -591,7 +650,7 @@ export interface ConfigSaveResponse {
 
 export interface DiffTarget {
   target: string;
-  items: { skill: string; action: string; reason?: string }[];
+  items: { skill: string; action: string; reason?: string; kind?: 'skill' | 'agent' }[];
   skippedCount?: number;
   collisionCount?: number;
 }
@@ -625,6 +684,7 @@ export interface InstallResult {
 
 export interface UpdateResultItem {
   name: string;
+  kind?: 'skill' | 'agent';
   action: string; // "updated", "up-to-date", "skipped", "error", "blocked"
   message?: string;
   isRepo: boolean;
@@ -643,6 +703,7 @@ export interface UpdateStreamSummary {
 export interface AvailableTarget {
   name: string;
   path: string;
+  agentPath?: string;
   installed: boolean;
   detected: boolean;
 }
@@ -657,11 +718,20 @@ export interface DiscoveredSkill {
   name: string;
   path: string;
   description?: string;
+  kind?: 'skill' | 'agent';
+}
+
+export interface DiscoveredAgent {
+  name: string;
+  path: string;
+  fileName: string;
+  kind: 'agent';
 }
 
 export interface DiscoverResult {
   needsSelection: boolean;
   skills: DiscoveredSkill[];
+  agents: DiscoveredAgent[];
 }
 
 export interface BatchInstallResultItem {
@@ -678,6 +748,7 @@ export interface BatchInstallResult {
 
 export interface BatchUninstallRequest {
   names: string[];
+  kind?: 'skill' | 'agent';
   force?: boolean;
 }
 
@@ -699,6 +770,7 @@ export interface LocalSkillInfo {
   targetName: string;
   size: number;
   modTime: string;
+  kind?: 'skill' | 'agent';
 }
 
 export interface CollectScanTarget {
@@ -720,6 +792,7 @@ export interface CollectResult {
 // Trash types
 export interface TrashedSkill {
   name: string;
+  kind?: 'skill' | 'agent';
   timestamp: string;
   date: string;
   size: number;
@@ -763,6 +836,7 @@ export interface RepoCheckResult {
 
 export interface SkillCheckResult {
   name: string;
+  kind?: 'skill' | 'agent';
   source: string;
   version: string;
   status: string;
@@ -853,6 +927,7 @@ export interface LogStatsResponse {
 // Audit types
 export interface AuditFinding {
   severity: 'CRITICAL' | 'HIGH' | 'MEDIUM' | 'LOW' | 'INFO';
+  kind?: 'skill' | 'agent';
   pattern: string;
   message: string;
   file: string;
@@ -867,6 +942,7 @@ export interface AuditFinding {
 
 export interface AuditResult {
   skillName: string;
+  kind?: 'skill' | 'agent';
   findings: AuditFinding[];
   riskScore: number;
   riskLabel: 'clean' | 'low' | 'medium' | 'high' | 'critical';
@@ -1018,4 +1094,19 @@ export interface SkillignoreResponse {
   path: string;
   raw: string;
   stats?: SkillignoreStats;
+}
+
+// Agentignore types
+export interface AgentignoreStats {
+  pattern_count: number;
+  ignored_count: number;
+  patterns: string[];
+  ignored_agents: string[];
+}
+
+export interface AgentignoreResponse {
+  exists: boolean;
+  path: string;
+  raw: string;
+  stats?: AgentignoreStats;
 }

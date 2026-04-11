@@ -11,6 +11,7 @@ import (
 	"skillshare/internal/config"
 	"skillshare/internal/oplog"
 	"skillshare/internal/sync"
+	"skillshare/internal/targetsummary"
 	"skillshare/internal/ui"
 	"skillshare/internal/utils"
 	"skillshare/internal/validate"
@@ -113,11 +114,16 @@ Options:
 
 Target Settings:
   <name> --mode <mode>              Set sync mode (merge, symlink, or copy)
+  <name> --agent-mode <mode>        Set agents sync mode (merge, symlink, or copy)
   <name> --target-naming <naming>   Set target naming (flat or standard)
   <name> --add-include <pattern>    Add an include filter pattern
   <name> --add-exclude <pattern>    Add an exclude filter pattern
   <name> --remove-include <pattern> Remove an include filter pattern
   <name> --remove-exclude <pattern> Remove an exclude filter pattern
+  <name> --add-agent-include <pattern>    Add an agent include filter pattern
+  <name> --add-agent-exclude <pattern>    Add an agent exclude filter pattern
+  <name> --remove-agent-include <pattern> Remove an agent include filter pattern
+  <name> --remove-agent-exclude <pattern> Remove an agent exclude filter pattern
 
 Examples:
   skillshare target add cursor
@@ -125,7 +131,9 @@ Examples:
   skillshare target remove cursor
   skillshare target list
   skillshare target cursor
+  skillshare target claude --agent-mode copy
   skillshare target claude --add-include "team-*"
+  skillshare target claude --add-agent-include "team-*"
   skillshare target claude --remove-include "team-*"
   skillshare target claude --add-exclude "_legacy*"
 
@@ -255,6 +263,28 @@ func backupTargets(cfg *config.Config, toRemove []string) {
 			ui.Warning("Failed to backup %s: %v", targetName, err)
 		} else if backupPath != "" {
 			ui.Success("%s -> %s", targetName, backupPath)
+		}
+	}
+
+	// Also backup agent directories for targets being removed.
+	backupDir, agentTargets, err := resolveGlobalAgentBackupContextFromCfg(cfg)
+	if err != nil || len(agentTargets) == 0 {
+		return
+	}
+	removeSet := make(map[string]struct{}, len(toRemove))
+	for _, name := range toRemove {
+		removeSet[name] = struct{}{}
+	}
+	for _, at := range agentTargets {
+		if _, ok := removeSet[at.name]; !ok {
+			continue
+		}
+		entryName := at.name + "-agents"
+		bp, bErr := backup.CreateInDir(backupDir, entryName, at.agentPath)
+		if bErr != nil {
+			ui.Warning("Failed to backup %s: %v", entryName, bErr)
+		} else if bp != "" {
+			ui.Success("%s -> %s", entryName, bp)
 		}
 	}
 }
@@ -412,11 +442,17 @@ func unlinkMergeMode(targetPath, sourcePath string) error {
 
 // targetListJSONItem is the JSON representation for a single target.
 type targetListJSONItem struct {
-	Name    string   `json:"name"`
-	Path    string   `json:"path"`
-	Mode    string   `json:"mode"`
-	Include []string `json:"include"`
-	Exclude []string `json:"exclude"`
+	Name               string   `json:"name"`
+	Path               string   `json:"path"`
+	Mode               string   `json:"mode"`
+	Include            []string `json:"include"`
+	Exclude            []string `json:"exclude"`
+	AgentPath          string   `json:"agentPath,omitempty"`
+	AgentMode          string   `json:"agentMode,omitempty"`
+	AgentInclude       []string `json:"agentInclude,omitempty"`
+	AgentExclude       []string `json:"agentExclude,omitempty"`
+	AgentLinkedCount   *int     `json:"agentLinkedCount,omitempty"`
+	AgentExpectedCount *int     `json:"agentExpectedCount,omitempty"`
 }
 
 func targetList(jsonOutput bool) error {
@@ -429,30 +465,39 @@ func targetList(jsonOutput bool) error {
 		return targetListJSON(cfg)
 	}
 
-	ui.Header("Configured Targets")
-	for name, target := range cfg.Targets {
-		sc := target.SkillsConfig()
-		mode := sc.Mode
-		if mode == "" {
-			mode = "merge"
-		}
-		fmt.Printf("  %-12s %s (%s)\n", name, sc.Path, mode)
+	items, err := buildTargetTUIItems(false, "")
+	if err != nil {
+		return err
 	}
+
+	ui.Header("Configured Targets")
+	printTargetListPlain(items)
 
 	return nil
 }
 
 func targetListJSON(cfg *config.Config) error {
+	agentBuilder, err := targetsummary.NewGlobalBuilder(cfg)
+	if err != nil {
+		return err
+	}
+
 	var items []targetListJSONItem
 	for name, target := range cfg.Targets {
 		sc := target.SkillsConfig()
-		items = append(items, targetListJSONItem{
+		item := targetListJSONItem{
 			Name:    name,
 			Path:    sc.Path,
 			Mode:    getTargetMode(sc.Mode, cfg.Mode),
 			Include: sc.Include,
 			Exclude: sc.Exclude,
-		})
+		}
+		agentSummary, err := agentBuilder.GlobalTarget(name, target)
+		if err != nil {
+			return err
+		}
+		applyTargetListAgentSummary(&item, agentSummary)
+		items = append(items, item)
 	}
 	output := struct {
 		Targets []targetListJSONItem `json:"targets"`
@@ -463,6 +508,10 @@ func targetListJSON(cfg *config.Config) error {
 func targetInfo(name string, args []string) error {
 	// Parse filter flags first, pass remaining to mode parsing
 	filterOpts, remaining, err := parseFilterFlags(args)
+	if err != nil {
+		return err
+	}
+	settings, err := parseTargetSettingFlags(remaining)
 	if err != nil {
 		return err
 	}
@@ -477,36 +526,59 @@ func targetInfo(name string, args []string) error {
 		return fmt.Errorf("target '%s' not found. Use 'skillshare target list' to see available targets", name)
 	}
 
-	// Parse --mode and --target-naming from remaining args
-	var newMode, newNaming string
-	for i := 0; i < len(remaining); i++ {
-		switch remaining[i] {
-		case "--mode", "-m":
-			if i+1 >= len(remaining) {
-				return fmt.Errorf("--mode requires a value (merge, symlink, or copy)")
-			}
-			newMode = remaining[i+1]
-			i++
-		case "--target-naming":
-			if i+1 >= len(remaining) {
-				return fmt.Errorf("--target-naming requires a value (flat or standard)")
-			}
-			newNaming = remaining[i+1]
-			i++
-		}
-	}
-
 	// Apply filter updates if any
 	if filterOpts.hasUpdates() {
 		start := time.Now()
-		s := target.EnsureSkills()
-		changes, fErr := applyFilterUpdates(&s.Include, &s.Exclude, filterOpts)
-		if fErr != nil {
-			return fErr
+		var changes []string
+		mutated := false
+
+		if filterOpts.Skills.hasUpdates() {
+			s := target.EnsureSkills()
+			skillChanges, fErr := applyFilterUpdates(&s.Include, &s.Exclude, filterOpts.Skills)
+			if fErr != nil {
+				return fErr
+			}
+			changes = append(changes, skillChanges...)
+			mutated = true
 		}
-		cfg.Targets[name] = target
-		if err := cfg.Save(); err != nil {
-			return err
+
+		if filterOpts.Agents.hasUpdates() {
+			agentBuilder, buildErr := targetsummary.NewGlobalBuilder(cfg)
+			if buildErr != nil {
+				return buildErr
+			}
+			agentSummary, buildErr := agentBuilder.GlobalTarget(name, target)
+			if buildErr != nil {
+				return buildErr
+			}
+			if agentSummary == nil {
+				return fmt.Errorf("target '%s' does not have an agents path", name)
+			}
+			if agentSummary.Mode == "symlink" {
+				return fmt.Errorf("target '%s' agent include/exclude filters are ignored in symlink mode; use --agent-mode merge or --agent-mode copy first", name)
+			}
+
+			ac := target.AgentsConfig()
+			include := append([]string(nil), ac.Include...)
+			exclude := append([]string(nil), ac.Exclude...)
+			agentChanges, fErr := applyFilterUpdates(&include, &exclude, filterOpts.Agents)
+			if fErr != nil {
+				return fErr
+			}
+			if len(agentChanges) > 0 {
+				a := target.EnsureAgents()
+				a.Include = include
+				a.Exclude = exclude
+				mutated = true
+			}
+			changes = append(changes, scopeFilterChanges("agents", agentChanges)...)
+		}
+
+		if mutated {
+			cfg.Targets[name] = target
+			if err := cfg.Save(); err != nil {
+				return err
+			}
 		}
 		for _, change := range changes {
 			ui.Success("%s: %s", name, change)
@@ -526,13 +598,17 @@ func targetInfo(name string, args []string) error {
 	}
 
 	// If --mode is provided, update the mode
-	if newMode != "" {
-		return updateTargetMode(cfg, name, target, newMode)
+	if settings.SkillMode != "" {
+		return updateTargetMode(cfg, name, target, settings.SkillMode)
+	}
+
+	if settings.AgentMode != "" {
+		return updateTargetAgentMode(cfg, name, target, settings.AgentMode)
 	}
 
 	// If --target-naming is provided, update the naming
-	if newNaming != "" {
-		return updateTargetNaming(cfg, name, target, newNaming)
+	if settings.Naming != "" {
+		return updateTargetNaming(cfg, name, target, settings.Naming)
 	}
 
 	// Show target info
@@ -560,6 +636,38 @@ func updateTargetMode(cfg *config.Config, name string, target config.TargetConfi
 	}
 
 	ui.Success("Changed %s mode: %s -> %s", name, oldMode, newMode)
+	ui.Info("Run 'skillshare sync' to apply the new mode")
+	return nil
+}
+
+func updateTargetAgentMode(cfg *config.Config, name string, target config.TargetConfig, newMode string) error {
+	if newMode != "merge" && newMode != "symlink" && newMode != "copy" {
+		return fmt.Errorf("invalid agent mode '%s'. Use 'merge', 'symlink', or 'copy'", newMode)
+	}
+
+	agentBuilder, err := targetsummary.NewGlobalBuilder(cfg)
+	if err != nil {
+		return err
+	}
+	agentSummary, err := agentBuilder.GlobalTarget(name, target)
+	if err != nil {
+		return err
+	}
+	if agentSummary == nil {
+		return fmt.Errorf("target '%s' does not have an agents path", name)
+	}
+
+	oldMode := agentSummary.Mode
+	target.EnsureAgents().Mode = newMode
+	cfg.Targets[name] = target
+	if err := cfg.Save(); err != nil {
+		return err
+	}
+
+	ui.Success("Changed %s agent mode: %s -> %s", name, oldMode, newMode)
+	if newMode == "symlink" && (len(agentSummary.Include) > 0 || len(agentSummary.Exclude) > 0) {
+		ui.Warning("Agent include/exclude filters are ignored in symlink mode")
+	}
 	ui.Info("Run 'skillshare sync' to apply the new mode")
 	return nil
 }
@@ -614,6 +722,15 @@ func showTargetInfo(cfg *config.Config, name string, target config.TargetConfig)
 		namingDisplay += " (default)"
 	}
 
+	agentBuilder, err := targetsummary.NewGlobalBuilder(cfg)
+	if err != nil {
+		return err
+	}
+	agentSummary, err := agentBuilder.GlobalTarget(name, target)
+	if err != nil {
+		return err
+	}
+
 	ui.Header(fmt.Sprintf("Target: %s", name))
 	fmt.Printf("  Path:    %s\n", sc.Path)
 	fmt.Printf("  Mode:    %s\n", modeDisplay)
@@ -621,6 +738,7 @@ func showTargetInfo(cfg *config.Config, name string, target config.TargetConfig)
 	fmt.Printf("  Status:  %s\n", statusLine)
 	fmt.Printf("  Include: %s\n", formatFilterList(sc.Include))
 	fmt.Printf("  Exclude: %s\n", formatFilterList(sc.Exclude))
+	printTargetAgentSection(agentSummary)
 
 	return nil
 }

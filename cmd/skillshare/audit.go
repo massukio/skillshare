@@ -11,6 +11,7 @@ import (
 	"skillshare/internal/audit"
 	"skillshare/internal/config"
 	"skillshare/internal/oplog"
+	"skillshare/internal/resource"
 	"skillshare/internal/sync"
 	"skillshare/internal/ui"
 	"skillshare/internal/utils"
@@ -130,6 +131,9 @@ func cmdAudit(args []string) error {
 	}
 	applyModeLabel(mode)
 
+	// Extract kind filter (e.g. "skillshare audit agents" or "--all").
+	kind, rest := parseKindArg(rest)
+
 	// Check for "rules" subcommand before standard audit arg parsing.
 	if len(rest) > 0 && rest[0] == "rules" {
 		return cmdAuditRules(mode, rest[1:])
@@ -161,6 +165,7 @@ func cmdAudit(args []string) error {
 
 	var (
 		sourcePath       string
+		agentsSourcePath string
 		projectRoot      string
 		defaultThreshold string
 		configProfile    string
@@ -184,6 +189,7 @@ func cmdAudit(args []string) error {
 			return err
 		}
 		sourcePath = rt.sourcePath
+		agentsSourcePath = rt.agentsSourcePath
 		projectRoot = cwd
 		defaultThreshold = rt.config.Audit.BlockThreshold
 		configProfile = rt.config.Audit.Profile
@@ -196,11 +202,17 @@ func cmdAudit(args []string) error {
 			return err
 		}
 		sourcePath = cfg.Source
+		agentsSourcePath = cfg.EffectiveAgentsSource()
 		defaultThreshold = cfg.Audit.BlockThreshold
 		configProfile = cfg.Audit.Profile
 		configDedupe = cfg.Audit.DedupeMode
 		configAnalyzers = cfg.Audit.EnabledAnalyzers
 		cfgPath = config.ConfigPath()
+	}
+
+	// When kind is agents-only, override sourcePath to the agents source directory.
+	if kind == kindAgents && agentsSourcePath != "" {
+		sourcePath = agentsSourcePath
 	}
 
 	policy := audit.ResolvePolicy(audit.PolicyInputs{
@@ -230,13 +242,13 @@ func cmdAudit(args []string) error {
 
 	switch {
 	case !hasTargets:
-		results, summary, err = auditInstalled(sourcePath, modeString(mode), projectRoot, threshold, opts, registry)
+		results, summary, err = auditInstalled(sourcePath, agentsSourcePath, modeString(mode), projectRoot, threshold, kind, opts, registry)
 	case isSinglePath:
 		results, summary, err = auditPath(opts.Targets[0], modeString(mode), projectRoot, threshold, opts.Format, opts.PolicyLine, registry)
 	case isSingleName:
-		results, summary, err = auditSkillByName(sourcePath, opts.Targets[0], modeString(mode), projectRoot, threshold, opts.Format, opts.PolicyLine, registry)
+		results, summary, err = auditSkillByName(sourcePath, opts.Targets[0], modeString(mode), projectRoot, threshold, opts.Format, opts.PolicyLine, kind, registry)
 	default:
-		results, summary, err = auditFiltered(sourcePath, opts.Targets, opts.Groups, modeString(mode), projectRoot, threshold, opts, registry)
+		results, summary, err = auditFiltered(sourcePath, agentsSourcePath, opts.Targets, opts.Groups, modeString(mode), projectRoot, threshold, kind, opts, registry)
 	}
 	if err != nil {
 		logAuditOp(cfgPath, rest, summary, start, err, false)
@@ -465,12 +477,42 @@ func scanSkillPath(skillPath, projectRoot string, registry *audit.Registry) (*au
 	return audit.ScanSkill(skillPath)
 }
 
-func toAuditInputs(skills []auditSkillRef) []audit.SkillInput {
-	inputs := make([]audit.SkillInput, len(skills))
-	for i, s := range skills {
-		inputs[i] = audit.SkillInput{Name: s.name, Path: s.path}
+func toAuditInputs(items []auditSkillRef, isFile bool) []audit.SkillInput {
+	inputs := make([]audit.SkillInput, len(items))
+	for i, item := range items {
+		inputs[i] = audit.SkillInput{Name: item.name, Path: item.path, IsFile: isFile}
 	}
 	return inputs
+}
+
+func collectInstalledAgentPaths(agentsSourcePath string) ([]auditSkillRef, error) {
+	if agentsSourcePath == "" {
+		return nil, nil
+	}
+	if _, err := os.Stat(agentsSourcePath); os.IsNotExist(err) {
+		return nil, nil
+	}
+	discovered, err := resource.AgentKind{}.Discover(agentsSourcePath)
+	if err != nil {
+		return nil, fmt.Errorf("failed to discover agents: %w", err)
+	}
+	var agentPaths []auditSkillRef
+	// Audit scans ALL agents including disabled ones — security risks don't respect .agentignore.
+	for _, d := range discovered {
+		agentPaths = append(agentPaths, auditSkillRef{name: d.FlatName, path: d.AbsPath})
+	}
+	return agentPaths, nil
+}
+
+func discoverForKind(kind resourceKindFilter, sourcePath string) ([]auditSkillRef, error) {
+	if kind == kindAgents {
+		return collectInstalledAgentPaths(sourcePath)
+	}
+	return collectInstalledSkillPaths(sourcePath)
+}
+
+func toInputsForKind(kind resourceKindFilter, items []auditSkillRef) []audit.SkillInput {
+	return toAuditInputs(items, kind == kindAgents)
 }
 
 func scanPathTarget(targetPath, projectRoot string, registry *audit.Registry) (*audit.Result, error) {
@@ -487,7 +529,7 @@ func scanPathTarget(targetPath, projectRoot string, registry *audit.Registry) (*
 	return audit.ScanFile(targetPath)
 }
 
-func auditInstalled(sourcePath, mode, projectRoot, threshold string, opts auditOptions, reg *audit.Registry) ([]*audit.Result, auditRunSummary, error) {
+func auditInstalled(sourcePath, agentsSourcePath, mode, projectRoot, threshold string, kind resourceKindFilter, opts auditOptions, reg *audit.Registry) ([]*audit.Result, auditRunSummary, error) {
 	jsonOutput := opts.isStructured()
 	base := auditRunSummary{
 		Scope:     "all",
@@ -495,12 +537,18 @@ func auditInstalled(sourcePath, mode, projectRoot, threshold string, opts auditO
 		Threshold: threshold,
 	}
 
-	// Phase 0: discover skills.
+	// Phase 0: discover skills/agents.
 	var spinner *ui.Spinner
 	if !jsonOutput {
-		spinner = ui.StartSpinner("Discovering skills...")
+		spinner = ui.StartSpinner(fmt.Sprintf("Discovering %s...", kind.Noun(2)))
 	}
-	skillPaths, err := collectInstalledSkillPaths(sourcePath)
+	var skillPaths []auditSkillRef
+	var err error
+	if kind == kindAgents {
+		skillPaths, err = collectInstalledAgentPaths(sourcePath)
+	} else {
+		skillPaths, err = collectInstalledSkillPaths(sourcePath)
+	}
 	if err != nil {
 		if spinner != nil {
 			spinner.Fail("Discovery failed")
@@ -509,18 +557,18 @@ func auditInstalled(sourcePath, mode, projectRoot, threshold string, opts auditO
 	}
 	if len(skillPaths) == 0 {
 		if spinner != nil {
-			spinner.Success("No skills found")
+			spinner.Success(fmt.Sprintf("No %s found", kind.Noun(2)))
 		}
 		return []*audit.Result{}, base, nil
 	}
 	if spinner != nil {
-		spinner.Success(fmt.Sprintf("Found %d skill(s)", len(skillPaths)))
+		spinner.Success(fmt.Sprintf("Found %d %s", len(skillPaths), kind.Noun(len(skillPaths))))
 	}
 
 	// Phase 0.5: large audit confirmation prompt.
 	if len(skillPaths) > largeAuditThreshold && !jsonOutput && !opts.Yes && ui.IsTTY() {
-		ui.Warning("Found %d skills. This may take a while.", len(skillPaths))
-		ui.Info("Tip: use 'audit --group <dir>' or 'audit <name>' to scan specific skills")
+		ui.Warning("Found %d %s. This may take a while.", len(skillPaths), kind.Noun(len(skillPaths)))
+		ui.Info("Tip: use 'audit --group <dir>' or 'audit <name>' to scan specific %s", kind.Noun(2))
 		fmt.Print("  Continue? [y/N]: ")
 		var answer string
 		fmt.Scanln(&answer)
@@ -533,7 +581,7 @@ func auditInstalled(sourcePath, mode, projectRoot, threshold string, opts auditO
 	var headerMinWidth int
 	if !jsonOutput {
 		fmt.Println()
-		subtitle := auditHeaderSubtitle(fmt.Sprintf("Scanning %d skills for threats", len(skillPaths)), mode, sourcePath, threshold, opts.PolicyLine)
+		subtitle := auditHeaderSubtitle(fmt.Sprintf("Scanning %d %s for threats", len(skillPaths), kind.Noun(len(skillPaths))), mode, sourcePath, threshold, opts.PolicyLine)
 		headerMinWidth = auditHeaderMinWidth(subtitle)
 		ui.HeaderBoxWithMinWidth(auditHeaderTitle(mode), subtitle, headerMinWidth)
 	}
@@ -544,14 +592,15 @@ func auditInstalled(sourcePath, mode, projectRoot, threshold string, opts auditO
 	}
 	var progressBar *ui.ProgressBar
 	if !jsonOutput {
-		progressBar = ui.StartProgress("Scanning skills", len(skillPaths))
+		progressBar = ui.StartProgress(fmt.Sprintf("Scanning %s", kind.Noun(2)), len(skillPaths))
 	}
 	onDone := func() {
 		if progressBar != nil {
 			progressBar.Increment()
 		}
 	}
-	scanResults := audit.ParallelScan(toAuditInputs(skillPaths), projectRoot, onDone, reg)
+	scanInputs := toInputsForKind(kind, skillPaths)
+	scanResults := audit.ParallelScan(scanInputs, projectRoot, onDone, reg)
 	if progressBar != nil {
 		progressBar.Stop()
 	}
@@ -574,6 +623,7 @@ func auditInstalled(sourcePath, mode, projectRoot, threshold string, opts auditO
 		}
 		sr.Result.Threshold = threshold
 		sr.Result.IsBlocked = sr.Result.HasSeverityAtOrAbove(threshold)
+		sr.Result.Kind = kind.SingularNoun()
 		// Use relative path so TUI shows group hierarchy (e.g. "frontend/vue/skill").
 		if rel, err := filepath.Rel(sourcePath, sr.Result.ScanTarget); err == nil && rel != sr.Result.SkillName {
 			sr.Result.SkillName = rel
@@ -594,14 +644,23 @@ func auditInstalled(sourcePath, mode, projectRoot, threshold string, opts auditO
 	}
 
 	applyPolicyToSummary(&summary, opts)
-	if err := presentAuditResults(results, elapsed, scanResults, summary, jsonOutput, opts, headerMinWidth); err != nil {
+	tuiCtx := &auditTUIContext{
+		kind:             kind,
+		sourcePath:       sourcePath,
+		agentsSourcePath: agentsSourcePath,
+		projectRoot:      projectRoot,
+		threshold:        threshold,
+		registry:         reg,
+		mode:             mode,
+	}
+	if err := presentAuditResults(results, elapsed, scanResults, summary, jsonOutput, opts, headerMinWidth, tuiCtx); err != nil {
 		return results, summary, err
 	}
 
 	return results, summary, nil
 }
 
-func auditFiltered(sourcePath string, names, groups []string, mode, projectRoot, threshold string, opts auditOptions, reg *audit.Registry) ([]*audit.Result, auditRunSummary, error) {
+func auditFiltered(sourcePath, agentsSourcePath string, names, groups []string, mode, projectRoot, threshold string, kind resourceKindFilter, opts auditOptions, reg *audit.Registry) ([]*audit.Result, auditRunSummary, error) {
 	jsonOutput := opts.isStructured()
 	base := auditRunSummary{
 		Scope:     "filtered",
@@ -609,7 +668,13 @@ func auditFiltered(sourcePath string, names, groups []string, mode, projectRoot,
 		Threshold: threshold,
 	}
 
-	allSkills, err := collectInstalledSkillPaths(sourcePath)
+	var allSkills []auditSkillRef
+	var err error
+	if kind == kindAgents {
+		allSkills, err = collectInstalledAgentPaths(sourcePath)
+	} else {
+		allSkills, err = collectInstalledSkillPaths(sourcePath)
+	}
 	if err != nil {
 		return nil, base, err
 	}
@@ -658,7 +723,7 @@ func auditFiltered(sourcePath string, names, groups []string, mode, projectRoot,
 	}
 	for _, w := range warnings {
 		if !jsonOutput {
-			ui.Warning("skill not found: %s", w)
+			ui.Warning("%s not found: %s", kind.SingularNoun(), w)
 		}
 	}
 
@@ -670,7 +735,7 @@ func auditFiltered(sourcePath string, names, groups []string, mode, projectRoot,
 	var headerMinWidth int
 	if !jsonOutput {
 		fmt.Println()
-		subtitle := auditHeaderSubtitle(fmt.Sprintf("Scanning %d skills for threats", len(matched)), mode, sourcePath, threshold, opts.PolicyLine)
+		subtitle := auditHeaderSubtitle(fmt.Sprintf("Scanning %d %s for threats", len(matched), kind.Noun(len(matched))), mode, sourcePath, threshold, opts.PolicyLine)
 		headerMinWidth = auditHeaderMinWidth(subtitle)
 		ui.HeaderBoxWithMinWidth(auditHeaderTitle(mode), subtitle, headerMinWidth)
 	}
@@ -681,14 +746,15 @@ func auditFiltered(sourcePath string, names, groups []string, mode, projectRoot,
 	}
 	var progressBar *ui.ProgressBar
 	if !jsonOutput {
-		progressBar = ui.StartProgress("Scanning skills", len(matched))
+		progressBar = ui.StartProgress(fmt.Sprintf("Scanning %s", kind.Noun(2)), len(matched))
 	}
 	onDone := func() {
 		if progressBar != nil {
 			progressBar.Increment()
 		}
 	}
-	scanResults := audit.ParallelScan(toAuditInputs(matched), projectRoot, onDone, reg)
+	scanInputs := toInputsForKind(kind, matched)
+	scanResults := audit.ParallelScan(scanInputs, projectRoot, onDone, reg)
 	if progressBar != nil {
 		progressBar.Stop()
 	}
@@ -711,6 +777,7 @@ func auditFiltered(sourcePath string, names, groups []string, mode, projectRoot,
 		}
 		sr.Result.Threshold = threshold
 		sr.Result.IsBlocked = sr.Result.HasSeverityAtOrAbove(threshold)
+		sr.Result.Kind = kind.SingularNoun()
 		if rel, err := filepath.Rel(sourcePath, sr.Result.ScanTarget); err == nil && rel != sr.Result.SkillName {
 			sr.Result.SkillName = rel
 		}
@@ -730,14 +797,23 @@ func auditFiltered(sourcePath string, names, groups []string, mode, projectRoot,
 	}
 
 	applyPolicyToSummary(&summary, opts)
-	if err := presentAuditResults(results, elapsed, scanResults, summary, jsonOutput, opts, headerMinWidth); err != nil {
+	tuiCtx := &auditTUIContext{
+		kind:             kind,
+		sourcePath:       sourcePath,
+		agentsSourcePath: agentsSourcePath,
+		projectRoot:      projectRoot,
+		threshold:        threshold,
+		registry:         reg,
+		mode:             mode,
+	}
+	if err := presentAuditResults(results, elapsed, scanResults, summary, jsonOutput, opts, headerMinWidth, tuiCtx); err != nil {
 		return results, summary, err
 	}
 
 	return results, summary, nil
 }
 
-func auditSkillByName(sourcePath, name, mode, projectRoot, threshold, format, policyLine string, reg *audit.Registry) ([]*audit.Result, auditRunSummary, error) {
+func auditSkillByName(sourcePath, name, mode, projectRoot, threshold, format, policyLine string, kind resourceKindFilter, reg *audit.Registry) ([]*audit.Result, auditRunSummary, error) {
 	summary := auditRunSummary{
 		Scope:     "single",
 		Skill:     name,
@@ -750,19 +826,20 @@ func auditSkillByName(sourcePath, name, mode, projectRoot, threshold, format, po
 		// Short-name fallback: search installed skills by flat name or basename.
 		resolved := resolveSkillPath(sourcePath, name)
 		if resolved == "" {
-			return nil, summary, fmt.Errorf("skill not found: %s", name)
+			return nil, summary, fmt.Errorf("%s not found: %s", kind.SingularNoun(), name)
 		}
 		skillPath = resolved
 	}
 
 	start := time.Now()
-	result, err := scanSkillPath(skillPath, projectRoot, reg)
+	result, err := scanPathTarget(skillPath, projectRoot, reg)
 	if err != nil {
 		return nil, summary, fmt.Errorf("scan error: %w", err)
 	}
 	elapsed := time.Since(start)
 	result.Threshold = threshold
 	result.IsBlocked = result.HasSeverityAtOrAbove(threshold)
+	result.Kind = kind.SingularNoun()
 	if rel, err := filepath.Rel(sourcePath, result.ScanTarget); err == nil && rel != result.SkillName {
 		result.SkillName = rel
 	}
@@ -772,8 +849,9 @@ func auditSkillByName(sourcePath, name, mode, projectRoot, threshold, format, po
 	summary.Skill = name
 	summary.Mode = mode
 	if format == formatText {
-		subtitle := auditHeaderSubtitle(fmt.Sprintf("Scanning skill: %s", name), mode, sourcePath, threshold, policyLine)
-		summaryLines := buildAuditSummaryLines(summary)
+		label := kind.SingularNoun()
+		subtitle := auditHeaderSubtitle(fmt.Sprintf("Scanning %s: %s", label, name), mode, sourcePath, threshold, policyLine)
+		summaryLines := buildAuditSummaryLines(summary, kind)
 		minWidth := auditHeaderMinWidth(subtitle)
 		ui.HeaderBoxWithMinWidth(auditHeaderTitle(mode), subtitle, minWidth)
 		fmt.Println()

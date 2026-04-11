@@ -4,7 +4,7 @@ sidebar_position: 4
 
 # trash
 
-Manage uninstalled skills in the trash directory.
+Manage uninstalled skills and agents in the trash directory.
 
 ```bash
 skillshare trash list                    # Interactive TUI (in TTY)
@@ -13,27 +13,32 @@ skillshare trash restore my-skill        # Restore from trash
 skillshare trash restore my-skill -p     # Restore in project mode
 skillshare trash delete my-skill         # Permanently delete from trash
 skillshare trash empty                   # Empty the trash
+skillshare trash agents list             # List trashed agents
+skillshare trash agents restore tutor    # Restore an agent from trash
+skillshare trash --all list              # List trashed skills + agents
 ```
 
 ## When to Use
 
-- Recover a skill you recently uninstalled (within 7 days)
-- Permanently delete trashed skills to free space
+- Recover a skill or agent you recently uninstalled (within 7 days)
+- Permanently delete trashed items to free space
 - Check what's in the trash before it auto-expires
 
 ## Interactive TUI
 
-In a TTY, `trash list` launches an interactive TUI with multi-select, filtering, and inline restore/delete operations:
+In a TTY, `trash list` launches an interactive TUI with multi-select, filtering, and inline restore/delete operations. Each item shows a kind badge: `[S]` for skills, `[A]` for agents.
 
 ```
 Trash (global) — 5 items
 
-  [ ] my-skill    (512 B, 2d ago)
-  [x] old-tool    (1.2 KB, 5d ago)
-  [ ] another     (128 B, 1d ago)
+  [ ] [S] my-skill    (512 B, 2d ago)
+  [x] [S] old-tool    (1.2 KB, 5d ago)
+  [ ] [A] tutor       (2.0 KB, 3d ago)
+  [ ] [S] another     (128 B, 1d ago)
 
   ─────────────────────────────────────────
   Name:         old-tool
+  Type:         Skill
   Trashed:      2026-02-27 14:30:05
   Size:         1.2 KB
   Path:         ~/.local/share/skillshare/trash/old-tool_...
@@ -49,6 +54,8 @@ Trash (global) — 5 items
   ↑↓ navigate  / filter  space select  r restore(1)  d delete(1)  D empty  q quit
 ```
 
+When using `--all` or without a kind filter, the TUI merges skills and agents into a single list sorted by date (newest first).
+
 ### Key Bindings
 
 | Key | Action |
@@ -61,6 +68,7 @@ Trash (global) — 5 items
 | `r` | Restore selected items (with confirmation) |
 | `d` | Permanently delete selected items (with confirmation) |
 | `D` | Empty all trash (ignores selection, with confirmation) |
+| `Ctrl+d`/`Ctrl+u` | Scroll detail panel down/up |
 | `q`/`Ctrl+C` | Quit |
 
 In confirmation mode: `y`/`Enter` to confirm, `n`/`Esc` to cancel.
@@ -80,15 +88,28 @@ skillshare trash list --no-tui           # Plain text output
 skillshare trash list --no-tui | less    # Pipe to pager manually
 ```
 
+## Kind Filter
+
+By default, trash operates on **skills**. Use the `agents` positional keyword to target agents, or `--all` to include both:
+
+```bash
+skillshare trash list                    # Skills only (default)
+skillshare trash agents list             # Agents only
+skillshare trash --all list              # Both skills and agents
+skillshare trash agents restore tutor    # Restore a trashed agent
+skillshare trash agents empty            # Empty agent trash only
+```
+
 ## Subcommands
 
 ### list (alias: `ls`)
 
-Show all skills currently in the trash. Launches the interactive TUI in a terminal, or prints plain text with `--no-tui` or in non-TTY:
+Show all items currently in the trash. Launches the interactive TUI in a terminal, or prints plain text with `--no-tui` or in non-TTY:
 
 ```bash
 skillshare trash list
-skillshare trash list --no-tui
+skillshare trash agents list
+skillshare trash --all list --no-tui
 ```
 
 Plain text output:
@@ -104,10 +125,11 @@ Items are automatically cleaned up after 7 days
 
 ### restore
 
-Restore the most recent trashed version of a skill back to the source directory:
+Restore the most recent trashed version back to the source directory:
 
 ```bash
 skillshare trash restore my-skill
+skillshare trash agents restore tutor
 ```
 
 ```
@@ -116,7 +138,9 @@ skillshare trash restore my-skill
 ℹ Run 'skillshare sync' to update targets
 ```
 
-If a skill with the same name already exists in source, restore will fail. Uninstall the existing skill first or use a different name.
+For agents, the restore hint will suggest `skillshare sync agents` instead.
+
+If an item with the same name already exists in source, restore will fail. Uninstall the existing item first or use a different name.
 
 ### delete (alias: `rm`)
 
@@ -124,6 +148,7 @@ Permanently delete a single item from the trash:
 
 ```bash
 skillshare trash delete my-skill
+skillshare trash agents delete tutor
 ```
 
 ```
@@ -136,6 +161,7 @@ Permanently delete all items from the trash (with confirmation prompt):
 
 ```bash
 skillshare trash empty
+skillshare trash agents empty
 ```
 
 ```
@@ -150,8 +176,8 @@ These two safety mechanisms protect different things:
 
 | | backup | trash |
 |---|---|---|
-| **Protects** | target directories (sync snapshots) | source skills (uninstall) |
-| **Location** | `~/.local/share/skillshare/backups/` | `~/.local/share/skillshare/trash/` |
+| **Protects** | target directories (sync snapshots) | source skills and agents (uninstall) |
+| **Location** | `~/.local/share/skillshare/backups/` | `~/.local/share/skillshare/trash/` (skills), `.../trash/agents/` (agents) |
 | **Triggered by** | `sync`, `target remove` | `uninstall` |
 | **Restore with** | `skillshare restore <target>` | `skillshare trash restore <name>` |
 | **Auto-cleanup** | manual (`backup --cleanup`) | 7 days |
@@ -160,6 +186,8 @@ These two safety mechanisms protect different things:
 
 | Flag | Description |
 |------|-------------|
+| `agents` | Positional keyword — operate on agents instead of skills |
+| `--all` | Include both skills and agents |
 | `--no-tui` | Disable interactive TUI, use plain text output |
 | `--project, -p` | Use project-level trash (`.skillshare/trash/`) |
 | `--global, -g` | Use global trash |

@@ -28,27 +28,39 @@ skillshare doctor --json    # Structured JSON output for CI
 skillshare doctor
 
 Checking environment
-  ✓ Config: ~/.config/skillshare/config.yaml
-  → Config directory: ~/.config/skillshare
-  → Data directory:   ~/.local/share/skillshare
-  → State directory:  ~/.local/state/skillshare
+✓ Config: ~/.config/skillshare/config.yaml
+→ Config directory: ~/.config/skillshare
+→ Data directory:   ~/.local/share/skillshare
+→ State directory:  ~/.local/state/skillshare
 
-  ✓ Source: ~/.config/skillshare/skills (12 skills)
-  ✓ Skillignore: 2 patterns, 1 skills ignored
-  ✓ Link support: OK
-  ✓ Git: initialized with remote
+✓ Source: ~/.config/skillshare/skills (12 skills)
+✓ Agents source: ~/.config/skillshare/agents (8 agents)
+✓ Skillignore: 2 patterns, 1 skills ignored
+✓ Link support: OK
+✓ Git: initialized with remote
+
+✓ Skill integrity: 12/12 verified
 
 Checking targets
-  ✓ claude    [merge]: merged (8 shared, 2 local)
-  ✓ cursor    [copy]: copied (8 managed, 0 local)
-  ⚠ codex     [merge]: needs sync
+claude
+  skills   [merge] merged (8 shared, 2 local)
+  agents   [merge] merged (8/8 linked)
+cursor
+  skills   [copy] copied (8 managed, 0 local)
+  agents   [merge] merged (8/8 linked)
+codex
+  skills   [merge] needs sync
+
+Extras
+✓ rules: 4 files, 1/1 targets OK
+✓ commands: 3 files, 1/1 targets OK
 
 Version
-  ✓ CLI: 1.2.0
-  ✓ Skill: 1.1.0
+✓ CLI: 0.17.0
+✓ Skill: 0.17.0
 
 Summary
-  ✓ All checks passed!
+✓ All checks passed!
 ```
 
 ## Checks Performed
@@ -59,16 +71,16 @@ Summary
 |-------|-----------------|
 | Config | Config file exists and is valid |
 | Source | Source directory exists and is readable |
+| Agents source | Agents source directory exists (if configured) |
 | Skillignore | `.skillignore` (and `.skillignore.local`) active patterns and ignored skill count |
 | Link support | System can create symlinks |
 | Git | Repository status and remote configuration |
 
 ### Targets
 
-For each target:
-- Path exists and is writable
-- Sync mode matches actual state
-- Sync drift (linked/managed count vs target expected count after `include`/`exclude`)
+Each target shows sub-items for **skills** and **agents** (when agents are configured):
+- Skills: path, sync mode, sync state, shared/local counts
+- Agents: linked count, drift detection
 - No broken symlinks
 - Duplicate-skill checks for unintended local collisions:
   - `merge` mode: skipped (local skills are expected)
@@ -84,11 +96,11 @@ For each target:
 
 ### Skill Integrity
 
-For tracked skills with `.skillshare-meta.json` file hashes, doctor verifies that no files have been tampered with since installation:
+For installed skills with file hash metadata, doctor verifies that no files have been tampered with since installation:
 
 - Compares current SHA-256 hashes against stored hashes
 - Reports modified, missing, and added files per skill
-- Local skills (no `.skillshare-meta.json`) are silently skipped — this is expected
+- Local skills (not in `.metadata.json`) are silently skipped — this is expected
 - Installed skills with metadata but missing `file_hashes` are flagged with their names
 
 ```text
@@ -177,25 +189,30 @@ On Windows without Developer Mode:
 
 ```
 Checking environment
-  ✓ Config: ~/.config/skillshare/config.yaml
-  ✓ Source: ~/.config/skillshare/skills (12 skills)
-  ✓ Link support: OK
-  ⚠ Git: 3 uncommitted change(s)
+✓ Config: ~/.config/skillshare/config.yaml
+✓ Source: ~/.config/skillshare/skills (12 skills)
+✓ Agents source: ~/.config/skillshare/agents (8 agents)
+✓ Link support: OK
+⚠ Git: 3 uncommitted change(s)
 
 ⚠ Skills without SKILL.md: test-dir, temp
 ⚠ _team-repo__api-helper: 1 modified
 ✓ Skill integrity: 5/6 verified
 
 Checking targets
-  ✓ claude    [merge]: merged (8 shared, 2 local)
-  ✗ cursor    [merge]: 2 broken symlink(s): old-skill, removed-skill
-  ⚠ codex     [merge->needs sync]: linked (needs sync to apply merge mode)
-  ⚠ claude: 1 skill(s) not synced (2/3 linked)
+claude
+  skills   [merge] merged (8 shared, 2 local)
+  agents   [merge] merged (8/8 linked)
+cursor
+  skills   [merge] 2 broken symlink(s): old-skill, removed-skill
+codex
+  skills   [merge] needs sync
+⚠ claude: 1 skill(s) not synced (2/3 linked)
 
 Version
-  ✓ CLI: 1.2.0
-  ⚠ Skill: 1.0.0 (update available: 1.1.0)
-    Run: skillshare upgrade --skill && skillshare sync
+✓ CLI: 0.17.0
+⚠ Skill: 0.16.0 (update available: 0.17.0)
+  Run: skillshare upgrade --skill && skillshare sync
 
 Backups: last backup 2026-01-18_09-00-00 (3 days ago)
 ℹ Trash: 2 item(s) (45.2 KB), oldest 3 day(s)

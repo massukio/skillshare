@@ -10,7 +10,7 @@ import (
 )
 
 // metadataAnalyzer cross-references SKILL.md metadata (name, description)
-// against the actual git source URL from .skillshare-meta.json.
+// against the actual git source URL from the centralized metadata store.
 // Detects social-engineering patterns: publisher mismatch and authority claims.
 // Runs at skill scope after all files are walked.
 type metadataAnalyzer struct{}
@@ -20,8 +20,18 @@ func (a *metadataAnalyzer) Scope() AnalyzerScope { return ScopeSkill }
 
 // metaJSON is a minimal subset of install.SkillMeta to avoid import cycles.
 type metaJSON struct {
-	RepoURL string `json:"repo_url"`
+	RepoURL    string            `json:"repo_url"`
+	FileHashes map[string]string `json:"file_hashes"`
 }
+
+// metadataStoreJSON is a minimal subset of install.MetadataStore for reading
+// the centralized .metadata.json without importing the install package.
+type metadataStoreJSON struct {
+	Entries map[string]metaJSON `json:"entries"`
+}
+
+// metadataFileName mirrors install.MetadataFileName to avoid a circular import.
+const metadataFileName = ".metadata.json"
 
 // Rule IDs for disable support via audit-rules.yaml.
 const (
@@ -47,7 +57,6 @@ func (a *metadataAnalyzer) Analyze(ctx *AnalyzeContext) ([]Finding, error) {
 		return nil, nil
 	}
 
-	// Read .skillshare-meta.json for source URL.
 	repoURL := readMetaRepoURL(ctx.SkillPath)
 
 	// Read SKILL.md frontmatter for name and description.
@@ -73,17 +82,45 @@ func (a *metadataAnalyzer) Analyze(ctx *AnalyzeContext) ([]Finding, error) {
 	return findings, nil
 }
 
-// readMetaRepoURL reads repo_url from .skillshare-meta.json in skillPath.
+// findMetaEntry walks up parent directories of skillPath looking for the
+// centralized .metadata.json store and returns the raw entry for this skill.
+func findMetaEntry(skillPath string) *metaJSON {
+	skillName := filepath.Base(skillPath)
+	dir := filepath.Dir(skillPath)
+
+	for i := 0; i < 10 && dir != filepath.Dir(dir); i++ {
+		data, err := os.ReadFile(filepath.Join(dir, metadataFileName))
+		if err == nil {
+			var store metadataStoreJSON
+			if json.Unmarshal(data, &store) == nil {
+				if rel, relErr := filepath.Rel(dir, skillPath); relErr == nil {
+					key := filepath.ToSlash(rel)
+					if e, ok := store.Entries[key]; ok {
+						return &e
+					}
+				}
+				if e, ok := store.Entries[skillName]; ok {
+					return &e
+				}
+			}
+		}
+		dir = filepath.Dir(dir)
+	}
+	return nil
+}
+
 func readMetaRepoURL(skillPath string) string {
-	data, err := os.ReadFile(filepath.Join(skillPath, ".skillshare-meta.json"))
-	if err != nil {
-		return ""
+	if e := findMetaEntry(skillPath); e != nil {
+		return e.RepoURL
 	}
-	var m metaJSON
-	if json.Unmarshal(data, &m) != nil {
-		return ""
+	return ""
+}
+
+func readMetaFileHashes(skillPath string) map[string]string {
+	if e := findMetaEntry(skillPath); e != nil {
+		return e.FileHashes
 	}
-	return m.RepoURL
+	return nil
 }
 
 // readSkillFrontmatter extracts name and description from SKILL.md.

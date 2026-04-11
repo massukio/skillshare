@@ -72,6 +72,13 @@
 - **Fix**: Use `>/dev/null 2>&1` (redirect both stdout AND stderr) for cleanup commands in steps that need pure JSON output
 - **Runbooks affected**: extras_flatten_runbook.md
 
+### [gotcha] chmod 0444 does not block writes when running as root
+
+- **Context**: `TestLog_SyncPartialStatus` used `os.Chmod(dir, 0444)` to make a target directory read-only, expecting sync to fail on that target and log `"status":"partial"`
+- **Discovery**: The devcontainer runs as root. Root ignores POSIX permission bits — `chmod 0444` has no effect. The "broken" target synced successfully, so the oplog recorded `"status":"ok"` instead of `"partial"`
+- **Fix**: Use a **dangling symlink** instead: `os.Symlink("/nonexistent/path", targetPath)`. This makes `os.Stat` return "not exist" (passes config validation) but `os.MkdirAll` fails because the symlink entry blocks directory creation. Works regardless of UID
+- **Runbooks affected**: `tests/integration/log_test.go` (`TestLog_SyncPartialStatus`)
+
 ### [gotcha] Full-directory mdproof runs cause inter-runbook state leakage
 
 - **Context**: Running `mdproof --report json /path/to/tests/` executes all runbooks sequentially in the same environment (same ssenv). Earlier runbooks install skills, modify config, fill trash — this state persists for later runbooks

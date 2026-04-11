@@ -14,7 +14,9 @@ import Tooltip from '../components/Tooltip';
 import EmptyState from '../components/EmptyState';
 import { useToast } from '../components/Toast';
 import { api, type SearchResult, type DiscoveredSkill } from '../api/client';
+import { clearAuditCache } from '../lib/auditCache';
 import { queryKeys } from '../lib/queryKeys';
+import { formatSkillDisplayName } from '../lib/resourceNames';
 
 type SearchMode = 'github' | 'hub';
 type SearchViewType = 'card' | 'table';
@@ -185,20 +187,23 @@ export default function SearchPage() {
         if (matched.length > 0) {
           const res = await api.installBatch({ source, skills: matched });
           let hasAuditBlock = false;
+          const batchErrors: string[] = [];
           for (const item of res.results) {
             if (item.error) {
               if (item.error.includes('security audit failed')) {
                 hasAuditBlock = true;
-                toast(`${item.name}: blocked by security audit`, 'error');
+                batchErrors.push(`${formatSkillDisplayName(item.name)}: blocked by security audit`);
               } else {
-                toast(`${item.name}: ${item.error}`, 'error');
+                batchErrors.push(`${formatSkillDisplayName(item.name)}: ${item.error}`);
               }
             }
             if (item.warnings?.length) {
-              item.warnings.forEach((w) => toast(`${item.name}: ${w}`, 'warning'));
+              item.warnings.forEach((w) => toast(`${formatSkillDisplayName(item.name)}: ${w}`, 'warning'));
             }
           }
+          if (batchErrors.length > 0) toast(`${batchErrors.length} failed: ${batchErrors.join('; ')}`, 'error');
           toast(res.summary, hasAuditBlock ? 'warning' : 'success');
+          clearAuditCache(queryClient);
           queryClient.invalidateQueries({ queryKey: queryKeys.skills.all });
           queryClient.invalidateQueries({ queryKey: queryKeys.overview });
           return;
@@ -212,20 +217,23 @@ export default function SearchPage() {
       } else if (disc.skills.length === 1) {
         const res = await api.installBatch({ source, skills: disc.skills });
         let hasAuditBlock = false;
+        const batchErrors: string[] = [];
         for (const item of res.results) {
           if (item.error) {
             if (item.error.includes('security audit failed')) {
               hasAuditBlock = true;
-              toast(`${item.name}: blocked by security audit`, 'error');
+              batchErrors.push(`${formatSkillDisplayName(item.name)}: blocked by security audit`);
             } else {
-              toast(`${item.name}: ${item.error}`, 'error');
+              batchErrors.push(`${formatSkillDisplayName(item.name)}: ${item.error}`);
             }
           }
           if (item.warnings?.length) {
-            item.warnings.forEach((w) => toast(`${item.name}: ${w}`, 'warning'));
+            item.warnings.forEach((w) => toast(`${formatSkillDisplayName(item.name)}: ${w}`, 'warning'));
           }
         }
+        if (batchErrors.length > 0) toast(`${batchErrors.length} failed: ${batchErrors.join('; ')}`, 'error');
         toast(res.summary, hasAuditBlock ? 'warning' : 'success');
+        clearAuditCache(queryClient);
         queryClient.invalidateQueries({ queryKey: queryKeys.skills.all });
         queryClient.invalidateQueries({ queryKey: queryKeys.overview });
       } else {
@@ -237,6 +245,7 @@ export default function SearchPage() {
         if (res.warnings?.length > 0) {
           res.warnings.forEach((w) => toast(w, 'warning'));
         }
+        clearAuditCache(queryClient);
         queryClient.invalidateQueries({ queryKey: queryKeys.skills.all });
         queryClient.invalidateQueries({ queryKey: queryKeys.overview });
       }
@@ -255,21 +264,24 @@ export default function SearchPage() {
         skills: selected,
       });
       let hasAuditBlock = false;
+      const batchErrors: string[] = [];
       for (const item of res.results) {
         if (item.error) {
           if (item.error.includes('security audit failed')) {
             hasAuditBlock = true;
-            toast(`${item.name}: blocked by security audit — use Force to override`, 'error');
+            batchErrors.push(`${formatSkillDisplayName(item.name)}: blocked by security audit — use Force to override`);
           } else {
-            toast(`${item.name}: ${item.error}`, 'error');
+            batchErrors.push(`${formatSkillDisplayName(item.name)}: ${item.error}`);
           }
         }
         if (item.warnings?.length) {
-          item.warnings.forEach((w) => toast(`${item.name}: ${w}`, 'warning'));
+          item.warnings.forEach((w) => toast(`${formatSkillDisplayName(item.name)}: ${w}`, 'warning'));
         }
       }
+      if (batchErrors.length > 0) toast(`${batchErrors.length} failed: ${batchErrors.join('; ')}`, 'error');
       toast(res.summary, hasAuditBlock ? 'warning' : 'success');
       setShowPicker(false);
+      clearAuditCache(queryClient);
       queryClient.invalidateQueries({ queryKey: queryKeys.skills.all });
       queryClient.invalidateQueries({ queryKey: queryKeys.overview });
     } catch (e: unknown) {

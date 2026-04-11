@@ -54,6 +54,31 @@ func writeJSONError(err error) error {
 	return &jsonSilentError{cause: err}
 }
 
+// jsonUISuppressor encapsulates the common "suppress stdout/UI once,
+// restore-once-and-only-once before writing the JSON payload" pattern that
+// every --json-capable command needs. Call Flush before emitting JSON so
+// the payload goes to real stdout; deferring Flush guarantees restoration
+// even if the command returns early.
+type jsonUISuppressor struct{ restore func() }
+
+// newJSONUISuppressor suppresses UI only when jsonMode is true.
+// Returns a zero-value suppressor otherwise, so callers can unconditionally
+// defer Flush without extra branching.
+func newJSONUISuppressor(jsonMode bool) *jsonUISuppressor {
+	if !jsonMode {
+		return &jsonUISuppressor{}
+	}
+	return &jsonUISuppressor{restore: suppressUIToDevnull()}
+}
+
+// Flush restores stdout/UI. Safe to call multiple times.
+func (s *jsonUISuppressor) Flush() {
+	if s.restore != nil {
+		s.restore()
+		s.restore = nil
+	}
+}
+
 // suppressUIToDevnull temporarily redirects os.Stdout and the progress
 // writer to /dev/null so that handler functions using fmt.Printf / ui.*
 // produce zero visible output.  This keeps --json output clean even when

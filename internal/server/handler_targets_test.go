@@ -272,3 +272,70 @@ func TestHandleUpdateTarget_ClearFilters(t *testing.T) {
 		t.Errorf("GET exclude should be empty after clear, got %v", resp.Targets[0].Exclude)
 	}
 }
+
+func TestHandleUpdateTarget_AgentIncludeExclude_Persisted(t *testing.T) {
+	tgtPath := filepath.Join(t.TempDir(), "claude-skills")
+	s, _ := newTestServerWithTargets(t, map[string]string{"claude": tgtPath})
+
+	// PATCH agent include/exclude
+	body := `{"agent_include":["review-*"],"agent_exclude":["draft-*"]}`
+	req := httptest.NewRequest(http.MethodPatch, "/api/targets/claude", strings.NewReader(body))
+	rr := httptest.NewRecorder()
+	s.handler.ServeHTTP(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("PATCH expected 200, got %d: %s", rr.Code, rr.Body.String())
+	}
+
+	// Verify disk persistence
+	diskCfg, err := config.Load()
+	if err != nil {
+		t.Fatalf("failed to load config from disk: %v", err)
+	}
+	tgt, ok := diskCfg.Targets["claude"]
+	if !ok {
+		t.Fatal("target 'claude' not found in disk config")
+	}
+	ac := tgt.AgentsConfig()
+	if len(ac.Include) != 1 || ac.Include[0] != "review-*" {
+		t.Errorf("disk agent include mismatch: got %v", ac.Include)
+	}
+	if len(ac.Exclude) != 1 || ac.Exclude[0] != "draft-*" {
+		t.Errorf("disk agent exclude mismatch: got %v", ac.Exclude)
+	}
+
+	// Verify in-memory state
+	memTgt := s.cfg.Targets["claude"]
+	memAc := memTgt.AgentsConfig()
+	if len(memAc.Include) != 1 || memAc.Include[0] != "review-*" {
+		t.Errorf("in-memory agent include mismatch: got %v", memAc.Include)
+	}
+	if len(memAc.Exclude) != 1 || memAc.Exclude[0] != "draft-*" {
+		t.Errorf("in-memory agent exclude mismatch: got %v", memAc.Exclude)
+	}
+}
+
+func TestHandleUpdateTarget_AgentInclude_InvalidPattern(t *testing.T) {
+	tgtPath := filepath.Join(t.TempDir(), "claude-skills")
+	s, _ := newTestServerWithTargets(t, map[string]string{"claude": tgtPath})
+
+	body := `{"agent_include":["[unclosed"]}`
+	req := httptest.NewRequest(http.MethodPatch, "/api/targets/claude", strings.NewReader(body))
+	rr := httptest.NewRecorder()
+	s.handler.ServeHTTP(rr, req)
+	if rr.Code != http.StatusBadRequest {
+		t.Errorf("expected 400 for invalid agent include pattern, got %d", rr.Code)
+	}
+}
+
+func TestHandleUpdateTarget_AgentExclude_InvalidPattern(t *testing.T) {
+	tgtPath := filepath.Join(t.TempDir(), "claude-skills")
+	s, _ := newTestServerWithTargets(t, map[string]string{"claude": tgtPath})
+
+	body := `{"agent_exclude":["[bad"]}`
+	req := httptest.NewRequest(http.MethodPatch, "/api/targets/claude", strings.NewReader(body))
+	rr := httptest.NewRecorder()
+	s.handler.ServeHTTP(rr, req)
+	if rr.Code != http.StatusBadRequest {
+		t.Errorf("expected 400 for invalid agent exclude pattern, got %d", rr.Code)
+	}
+}

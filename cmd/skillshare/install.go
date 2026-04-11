@@ -97,6 +97,23 @@ func parseInstallArgs(args []string) (*installArgs, bool, error) {
 			result.opts.Branch = branch
 		case arg == "--track" || arg == "-t":
 			result.opts.Track = true
+		case arg == "--kind":
+			if i+1 >= len(args) {
+				return nil, false, fmt.Errorf("--kind requires a value (skill or agent)")
+			}
+			i++
+			kind := strings.ToLower(args[i])
+			if kind != "skill" && kind != "agent" {
+				return nil, false, fmt.Errorf("--kind must be 'skill' or 'agent', got %q", args[i])
+			}
+			result.opts.Kind = kind
+		case arg == "--agent" || arg == "-a":
+			if i+1 >= len(args) {
+				return nil, false, fmt.Errorf("-a requires agent name(s)")
+			}
+			i++
+			result.opts.AgentNames = strings.Split(args[i], ",")
+			result.opts.Kind = "agent"
 		case arg == "--skill" || arg == "-s":
 			if i+1 >= len(args) {
 				return nil, false, fmt.Errorf("--skill requires a value")
@@ -115,6 +132,8 @@ func parseInstallArgs(args []string) (*installArgs, bool, error) {
 			}
 			i++
 			result.opts.Into = args[i]
+		case strings.HasPrefix(arg, "--into="):
+			result.opts.Into = strings.TrimPrefix(arg, "--into=")
 		case arg == "--all":
 			result.opts.All = true
 		case arg == "--yes" || arg == "-y":
@@ -171,6 +190,9 @@ func parseInstallArgs(args []string) (*installArgs, bool, error) {
 	if result.opts.HasSkillFilter() && result.opts.Track {
 		return nil, false, fmt.Errorf("--skill cannot be used with --track")
 	}
+	if result.opts.HasAgentFilter() && result.opts.Track {
+		return nil, false, fmt.Errorf("--agent cannot be used with --track")
+	}
 	if result.opts.ShouldInstallAll() && result.opts.Track {
 		return nil, false, fmt.Errorf("--all/--yes cannot be used with --track")
 	}
@@ -191,12 +213,30 @@ func parseInstallArgs(args []string) (*installArgs, bool, error) {
 	return result, false, nil
 }
 
+func applyInstallJSONDefaults(parsed *installArgs) {
+	if !parsed.jsonOutput {
+		return
+	}
+	parsed.opts.Force = true
+	if !parsed.opts.HasSkillFilter() && !parsed.opts.HasAgentFilter() {
+		parsed.opts.All = true
+	}
+}
+
 // destWithInto returns the destination path, prepending opts.Into if set.
 func destWithInto(sourceDir string, opts install.InstallOptions, skillName string) string {
 	if opts.Into != "" {
 		return filepath.Join(sourceDir, opts.Into, skillName)
 	}
 	return filepath.Join(sourceDir, skillName)
+}
+
+// agentsDirWithInto returns agentsDir joined with opts.Into (if set).
+func agentsDirWithInto(agentsDir string, opts install.InstallOptions) string {
+	if opts.Into != "" {
+		return filepath.Join(agentsDir, opts.Into)
+	}
+	return agentsDir
 }
 
 // ensureIntoDirExists creates the Into subdirectory if opts.Into is set.
@@ -219,17 +259,17 @@ func parseOptsFromProjectConfig(cfg *config.ProjectConfig) install.ParseOptions 
 
 // resolveSkillFromName resolves a skill name to source using metadata
 func resolveSkillFromName(skillName string, cfg *config.Config) (*install.Source, error) {
-	skillPath := filepath.Join(cfg.Source, skillName)
-
-	meta, err := install.ReadMeta(skillPath)
+	store, err := install.LoadMetadataWithMigration(cfg.Source, "")
 	if err != nil {
 		return nil, fmt.Errorf("skill '%s' not found or has no metadata", skillName)
 	}
-	if meta == nil {
+
+	entry := store.GetByPath(skillName)
+	if entry == nil || entry.Source == "" {
 		return nil, fmt.Errorf("skill '%s' has no metadata, cannot update", skillName)
 	}
 
-	source, err := install.ParseSourceWithOptions(meta.Source, parseOptsFromConfig(cfg))
+	source, err := install.ParseSourceWithOptions(entry.Source, parseOptsFromConfig(cfg))
 	if err != nil {
 		return nil, fmt.Errorf("invalid source in metadata: %w", err)
 	}
@@ -295,11 +335,32 @@ func cmdInstall(args []string) error {
 	applyModeLabel(mode)
 
 	if mode == modeProject {
-		summary, err := cmdInstallProject(rest, cwd)
+		parsed, showHelp, parseErr := parseInstallArgs(rest)
+		if showHelp {
+			printInstallHelp()
+			return parseErr
+		}
+		if parseErr != nil {
+			return parseErr
+		}
+		applyInstallJSONDefaults(parsed)
+
+		jsonUI := newJSONUISuppressor(parsed.jsonOutput)
+		defer jsonUI.Flush()
+
+		jsonWriteResult := func(summary installLogSummary, cmdErr error) error {
+			jsonUI.Flush()
+			return installOutputJSON(summary, start, cmdErr)
+		}
+
+		summary, err := cmdInstallProjectParsed(parsed, cwd)
 		if summary.Mode == "" {
 			summary.Mode = "project"
 		}
 		logInstallOp(config.ProjectConfigPath(cwd), rest, start, err, summary)
+		if parsed.jsonOutput {
+			return jsonWriteResult(summary, err)
+		}
 		return err
 	}
 
@@ -311,46 +372,30 @@ func cmdInstall(args []string) error {
 	if parseErr != nil {
 		return parseErr
 	}
-
-	// --json implies --force and --all (skip prompts for non-interactive use)
-	if parsed.jsonOutput {
-		parsed.opts.Force = true
-		if !parsed.opts.HasSkillFilter() {
-			parsed.opts.All = true
-		}
-	}
+	applyInstallJSONDefaults(parsed)
 
 	// When no source is given, only bare "install" is valid — reject incompatible flags
 	if parsed.sourceArg == "" {
 		hasSourceFlags := parsed.opts.Name != "" || parsed.opts.Into != "" ||
-			parsed.opts.Track || len(parsed.opts.Skills) > 0 ||
-			len(parsed.opts.Exclude) > 0 || parsed.opts.All || parsed.opts.Yes || parsed.opts.Update ||
-			parsed.opts.Branch != ""
-		if hasSourceFlags && !parsed.jsonOutput {
-			return fmt.Errorf("flags --name, --into, --track, --skill, --exclude, --all, --yes, and --update require a source argument")
+			parsed.opts.Track || parsed.opts.HasSkillFilter() || parsed.opts.HasAgentFilter() ||
+			len(parsed.opts.Exclude) > 0 || parsed.opts.Update || parsed.opts.Branch != "" ||
+			parsed.opts.Kind != ""
+		if hasSourceFlags || ((parsed.opts.All || parsed.opts.Yes) && !parsed.jsonOutput) {
+			return fmt.Errorf("flags --name, --into, --track, --skill, --agent, --kind, --exclude, --all, --yes, --branch, and --update require a source argument")
 		}
 	}
 
 	// In JSON mode, redirect all UI output to stderr early so the
 	// logo, spinner, step, and handler output don't corrupt stdout.
-	var restoreJSONUI func()
-	restoreJSONUIIfNeeded := func() {
-		if restoreJSONUI != nil {
-			restoreJSONUI()
-			restoreJSONUI = nil
-		}
-	}
-	if parsed.jsonOutput {
-		restoreJSONUI = suppressUIToDevnull()
-	}
-	defer restoreJSONUIIfNeeded()
+	jsonUI := newJSONUISuppressor(parsed.jsonOutput)
+	defer jsonUI.Flush()
 
 	jsonWriteError := func(err error) error {
-		restoreJSONUIIfNeeded()
+		jsonUI.Flush()
 		return writeJSONError(err)
 	}
 	jsonWriteResult := func(summary installLogSummary, cmdErr error) error {
-		restoreJSONUIIfNeeded()
+		jsonUI.Flush()
 		return installOutputJSON(summary, start, cmdErr)
 	}
 
@@ -375,6 +420,7 @@ func cmdInstall(args []string) error {
 		return err
 	}
 
+	parsed.opts.SourceDir = cfg.Source
 	source, resolvedFromMeta, err := resolveInstallSource(parsed.sourceArg, parsed.opts, cfg)
 	if err == nil && parsed.opts.Branch != "" {
 		source.Branch = parsed.opts.Branch
@@ -411,10 +457,10 @@ func cmdInstall(args []string) error {
 			summary.Source = parsed.sourceArg
 		}
 		if err == nil && !parsed.opts.DryRun && len(summary.InstalledSkills) > 0 {
-			reg, regErr := config.LoadRegistry(cfg.RegistryDir)
-			if regErr != nil {
-				ui.Warning("Failed to load registry: %v", regErr)
-			} else if rErr := config.ReconcileGlobalSkills(cfg, reg); rErr != nil {
+			store, storeErr := install.LoadMetadataWithMigration(cfg.Source, "")
+			if storeErr != nil {
+				ui.Warning("Failed to load metadata: %v", storeErr)
+			} else if rErr := config.ReconcileGlobalSkills(cfg, store); rErr != nil {
 				ui.Warning("Failed to reconcile global skills config: %v", rErr)
 			}
 		}
@@ -433,10 +479,10 @@ func cmdInstall(args []string) error {
 		summary.Source = parsed.sourceArg
 	}
 	if err == nil && !parsed.opts.DryRun && len(summary.InstalledSkills) > 0 {
-		reg, regErr := config.LoadRegistry(cfg.RegistryDir)
-		if regErr != nil {
-			ui.Warning("Failed to load registry: %v", regErr)
-		} else if rErr := config.ReconcileGlobalSkills(cfg, reg); rErr != nil {
+		store, storeErr := install.LoadMetadataWithMigration(cfg.Source, "")
+		if storeErr != nil {
+			ui.Warning("Failed to load metadata: %v", storeErr)
+		} else if rErr := config.ReconcileGlobalSkills(cfg, store); rErr != nil {
 			ui.Warning("Failed to reconcile global skills config: %v", rErr)
 		}
 	}
@@ -535,11 +581,13 @@ Sources:
 
 Options:
   --name <name>       Override installed name when exactly one skill is installed
+  --kind <kind>       Restrict discovery/install to skill or agent
   --into <dir>        Install into subdirectory (e.g. "frontend" or "frontend/react")
   --force, -f         Overwrite existing skill; also continue if audit would block
   --update, -u        Update existing (git pull if possible, else reinstall)
   --branch, -b <name> Git branch to clone from (default: remote default)
   --track, -t         Install as tracked repo (preserves .git for updates)
+  --agent, -a <names> Select specific agents from a multi-agent repo (comma-separated)
   --skill, -s <names> Select specific skills from multi-skill repo (comma-separated;
                       supports glob patterns like "core-*", "test-?")
   --exclude <names>   Skip specific skills during install (comma-separated;
@@ -568,6 +616,8 @@ Examples:
   skillshare install ~/my-skill -T high          # Override block threshold for this run
 
 Selective install (non-interactive):
+  skillshare install org/agents --kind agent             # Agents only
+  skillshare install org/agents -a reviewer,tutor        # Specific agents
   skillshare install anthropics/skills -s pdf,commit     # Specific skills
   skillshare install anthropics/skills -s "core-*"       # Glob pattern
   skillshare install anthropics/skills --all             # All skills

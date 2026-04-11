@@ -1,6 +1,7 @@
 package sync
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -8,6 +9,10 @@ import (
 
 	"skillshare/internal/utils"
 )
+
+// ErrAlreadyExists is returned when a skill or agent already exists in source
+// and --force was not specified.
+var ErrAlreadyExists = errors.New("already exists in source")
 
 // LocalSkillInfo describes a local skill in a target directory
 type LocalSkillInfo struct {
@@ -125,7 +130,7 @@ func PullSkill(skill LocalSkillInfo, sourcePath string, force bool) error {
 	// Check if skill already exists in source
 	if _, err := os.Stat(destPath); err == nil {
 		if !force {
-			return fmt.Errorf("already exists in source")
+			return ErrAlreadyExists
 		}
 		// Remove existing to overwrite
 		if err := os.RemoveAll(destPath); err != nil {
@@ -152,7 +157,7 @@ func PullSkills(skills []LocalSkillInfo, sourcePath string, opts PullOptions) (*
 
 		err := PullSkill(skill, sourcePath, opts.Force)
 		if err != nil {
-			if err.Error() == "already exists in source" {
+			if errors.Is(err, ErrAlreadyExists) {
 				result.Skipped = append(result.Skipped, skill.Name)
 			} else {
 				result.Failed[skill.Name] = err

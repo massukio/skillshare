@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"skillshare/internal/audit"
@@ -16,6 +17,7 @@ import (
 
 type updateRequest struct {
 	Name      string `json:"name"`
+	Kind      string `json:"kind,omitempty"`
 	Force     bool   `json:"force"`
 	All       bool   `json:"all"`
 	SkipAudit bool   `json:"skipAudit"`
@@ -28,6 +30,7 @@ type updateResultItem struct {
 	IsRepo         bool   `json:"isRepo"`
 	AuditRiskScore int    `json:"auditRiskScore,omitempty"`
 	AuditRiskLabel string `json:"auditRiskLabel,omitempty"`
+	Kind           string `json:"kind,omitempty"`
 }
 
 func (s *Server) updateAuditThreshold() string {
@@ -99,8 +102,12 @@ func (s *Server) handleUpdate(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "name is required (or use all: true)")
 		return
 	}
+	if body.Kind != "" && body.Kind != "skill" && body.Kind != "agent" {
+		writeError(w, http.StatusBadRequest, "invalid kind: "+body.Kind)
+		return
+	}
 
-	result := s.updateSingle(body.Name, body.Force, body.SkipAudit)
+	result := s.updateSingleByKind(body.Name, body.Kind, body.Force, body.SkipAudit)
 	status := "ok"
 	msg := ""
 	if result.Action == "error" {
@@ -123,9 +130,16 @@ func (s *Server) handleUpdate(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) updateSingle(name string, force, skipAudit bool) updateResultItem {
+	return s.updateSingleByKind(name, "", force, skipAudit)
+}
+
+func (s *Server) updateSingleByKind(name, kind string, force, skipAudit bool) updateResultItem {
+	if kind == "agent" {
+		return s.updateAgent(name, force, skipAudit)
+	}
 	// Try exact skill path first (prevents basename collision with nested repos)
 	skillPath := filepath.Join(s.cfg.Source, name)
-	if meta, _ := install.ReadMeta(skillPath); meta != nil && meta.Source != "" {
+	if entry := s.skillsStore.GetByPath(name); entry != nil && entry.Source != "" {
 		return s.updateRegularSkill(name, skillPath, skipAudit)
 	}
 
@@ -142,6 +156,109 @@ func (s *Server) updateSingle(name string, force, skipAudit bool) updateResultIt
 		Name:    name,
 		Action:  "error",
 		Message: fmt.Sprintf("'%s' not found as tracked repo or updatable skill", name),
+	}
+}
+
+func (s *Server) updateAgent(name string, force, skipAudit bool) updateResultItem {
+	agentsSource := s.agentsSource()
+	if agentsSource == "" {
+		return updateResultItem{Name: name, Kind: "agent", Action: "error", Message: "agents source is not configured"}
+	}
+
+	localAgent, err := resolveAgentResource(agentsSource, name)
+	if err != nil {
+		return updateResultItem{Name: name, Kind: "agent", Action: "error", Message: err.Error()}
+	}
+
+	if localAgent.RepoRelPath != "" {
+		repoPath := filepath.Join(agentsSource, filepath.FromSlash(localAgent.RepoRelPath))
+		return s.updateTrackedRepo(agentMetaKey(localAgent.RelPath), repoPath, force, skipAudit)
+	}
+
+	metaKey := agentMetaKey(localAgent.RelPath)
+	entry := s.agentsStore.GetByPath(metaKey)
+	if entry == nil || entry.Source == "" {
+		return updateResultItem{
+			Name:    metaKey,
+			Kind:    "agent",
+			Action:  "skipped",
+			Message: "agent is local and has no update source",
+		}
+	}
+
+	source, err := install.ParseSource(entry.Source)
+	if err != nil {
+		return updateResultItem{Name: metaKey, Kind: "agent", Action: "error", Message: "invalid source: " + err.Error()}
+	}
+
+	repoSubdir := strings.TrimSuffix(source.Subdir, entry.Subdir)
+	repoSubdir = strings.TrimRight(repoSubdir, "/")
+	source.Subdir = repoSubdir
+
+	var discovery *install.DiscoveryResult
+	if source.HasSubdir() {
+		discovery, err = install.DiscoverFromGitSubdir(source)
+	} else {
+		discovery, err = install.DiscoverFromGit(source)
+	}
+	if err != nil {
+		return updateResultItem{Name: metaKey, Kind: "agent", Action: "error", Message: err.Error()}
+	}
+	defer install.CleanupDiscovery(discovery)
+
+	if discovery.CommitHash != "" && discovery.CommitHash == entry.Version {
+		return updateResultItem{Name: metaKey, Kind: "agent", Action: "up-to-date"}
+	}
+
+	var target *install.AgentInfo
+	for i := range discovery.Agents {
+		candidate := discovery.Agents[i]
+		if candidate.Path == entry.Subdir ||
+			candidate.FileName == filepath.Base(localAgent.RelPath) ||
+			candidate.Name == filepath.Base(metaKey) {
+			target = &discovery.Agents[i]
+			break
+		}
+	}
+	if target == nil {
+		return updateResultItem{
+			Name:    metaKey,
+			Kind:    "agent",
+			Action:  "error",
+			Message: fmt.Sprintf("agent path %q not found in repository", entry.Subdir),
+		}
+	}
+
+	destDir := agentsSource
+	opts := install.InstallOptions{
+		Kind:           "agent",
+		Force:          force,
+		Update:         true,
+		SkipAudit:      skipAudit,
+		AuditThreshold: s.updateAuditThreshold(),
+		SourceDir:      agentsSource,
+	}
+	if s.IsProjectMode() {
+		opts.AuditProjectRoot = s.projectRoot
+	}
+	res, err := install.UpdateAgentFromDiscovery(discovery, *target, destDir, opts)
+	if err != nil {
+		return updateResultItem{Name: metaKey, Kind: "agent", Action: "error", Message: err.Error()}
+	}
+
+	if st, loadErr := install.LoadMetadataWithMigration(agentsSource, install.MetadataKindAgent); loadErr == nil && st != nil {
+		s.agentsStore = st
+	}
+
+	message := res.Action
+	if message == "" {
+		message = "updated"
+	}
+	return updateResultItem{
+		Name:    metaKey,
+		Kind:    "agent",
+		Action:  "updated",
+		Message: message,
 	}
 }
 
@@ -261,8 +378,11 @@ func (s *Server) auditGateTrackedRepo(name, repoPath, beforeHash, threshold stri
 }
 
 func (s *Server) updateRegularSkill(name, skillPath string, skipAudit bool) updateResultItem {
-	meta, _ := install.ReadMeta(skillPath)
-	source, err := install.ParseSourceWithOptions(meta.Source, s.parseOpts())
+	entry := s.skillsStore.GetByPath(name)
+	if entry == nil {
+		return updateResultItem{Name: name, Action: "error", Message: "no metadata found"}
+	}
+	source, err := install.ParseSourceWithOptions(entry.Source, s.parseOpts())
 	if err != nil {
 		return updateResultItem{
 			Name:    name,
@@ -314,7 +434,7 @@ func (s *Server) updateAll(force, skipAudit bool) []updateResultItem {
 	}
 
 	// Update regular skills with source metadata
-	skills, err := getServerUpdatableSkills(s.cfg.Source)
+	skills, err := getServerUpdatableSkills(s.cfg.Source, s.skillsStore)
 	if err == nil {
 		for _, skill := range skills {
 			skillPath := filepath.Join(s.cfg.Source, skill)
@@ -327,7 +447,7 @@ func (s *Server) updateAll(force, skipAudit bool) []updateResultItem {
 
 // getServerUpdatableSkills returns relative paths of skills that have metadata with a remote source.
 // It walks the source directory recursively to find nested skills (e.g. utils/ascii-box-check).
-func getServerUpdatableSkills(sourceDir string) ([]string, error) {
+func getServerUpdatableSkills(sourceDir string, store *install.MetadataStore) ([]string, error) {
 	var skills []string
 	walkRoot := utils.ResolveSymlink(sourceDir)
 	err := filepath.WalkDir(walkRoot, func(path string, d os.DirEntry, err error) error {
@@ -350,8 +470,12 @@ func getServerUpdatableSkills(sourceDir string) ([]string, error) {
 			return filepath.SkipDir
 		}
 		// Check if this directory has updatable metadata
-		meta, metaErr := install.ReadMeta(path)
-		if metaErr != nil || meta == nil || meta.Source == "" {
+		relName := filepath.Base(path)
+		if relP, relErr2 := filepath.Rel(walkRoot, path); relErr2 == nil {
+			relName = filepath.ToSlash(relP)
+		}
+		entry := store.GetByPath(relName)
+		if entry == nil || entry.Source == "" {
 			return nil // continue walking into subdirectories
 		}
 		relPath, relErr := filepath.Rel(walkRoot, path)

@@ -135,6 +135,31 @@ func ReadMatcher(dir string) *Matcher {
 	return m
 }
 
+// ReadAgentIgnoreMatcher reads .agentignore (and .agentignore.local) from dir
+// and returns a compiled Matcher. Same gitignore-style pattern format as .skillignore.
+func ReadAgentIgnoreMatcher(dir string) *Matcher {
+	var lines []string
+	var hasLocal bool
+
+	data, err := os.ReadFile(filepath.Join(dir, ".agentignore"))
+	if err == nil {
+		lines = strings.Split(string(data), "\n")
+	}
+
+	localData, localErr := os.ReadFile(filepath.Join(dir, ".agentignore.local"))
+	if localErr == nil {
+		hasLocal = true
+		lines = append(lines, strings.Split(string(localData), "\n")...)
+	}
+
+	if len(lines) == 0 {
+		return &Matcher{}
+	}
+	m := Compile(lines)
+	m.HasLocal = hasLocal
+	return m
+}
+
 // HasRules reports whether the matcher has any compiled rules.
 func (m *Matcher) HasRules() bool {
 	return m != nil && len(m.rules) > 0

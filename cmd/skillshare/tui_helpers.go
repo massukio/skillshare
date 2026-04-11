@@ -7,6 +7,7 @@ import (
 
 	"github.com/charmbracelet/lipgloss"
 	"skillshare/internal/config"
+	"skillshare/internal/theme"
 	"skillshare/internal/ui"
 )
 
@@ -44,6 +45,31 @@ func appendScrollInfo(help, scrollInfo string) string {
 		return help + "  " + scrollInfo
 	}
 	return help
+}
+
+// formatHelpBar colorizes a help string like "Tab skills/agents  ↑↓ navigate  q quit".
+// Each pair "key desc" is parsed: key gets HelpKey style (dim cyan), desc stays dim.
+// Pairs are separated by two or more spaces.
+func formatHelpBar(raw string) string {
+	// Split by double-space to get individual "key desc" pairs
+	pairs := strings.Split(raw, "  ")
+	var parts []string
+	for _, pair := range pairs {
+		pair = strings.TrimSpace(pair)
+		if pair == "" {
+			continue
+		}
+		// Split first space: key + description
+		if idx := strings.IndexByte(pair, ' '); idx > 0 {
+			key := pair[:idx]
+			desc := pair[idx:]
+			parts = append(parts, theme.Accent().Faint(true).Render(key)+theme.Dim().MarginLeft(2).UnsetMarginLeft().Render(desc))
+		} else {
+			// Single word (e.g. just a key)
+			parts = append(parts, theme.Accent().Faint(true).Render(pair))
+		}
+	}
+	return "  " + strings.Join(parts, "  ")
 }
 
 // applyDetailScrollSplit applies scrolling and returns (visible content, scroll info).
@@ -102,7 +128,7 @@ func renderHorizontalSplit(leftContent, rightContent string, leftWidth, rightWid
 		Height(panelHeight).MaxHeight(panelHeight).
 		Render(leftContent)
 
-	borderStyle := tc.Border.
+	borderStyle := theme.Dim().
 		Height(panelHeight).MaxHeight(panelHeight)
 	borderCol := strings.Repeat("│\n", panelHeight)
 	borderPanel := borderStyle.Render(strings.TrimRight(borderCol, "\n"))

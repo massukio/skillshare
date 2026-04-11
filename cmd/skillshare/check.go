@@ -51,7 +51,7 @@ type checkOptions struct {
 type skillWithMeta struct {
 	name string
 	path string
-	meta *install.SkillMeta
+	meta *install.MetadataEntry
 }
 
 // collectCheckItems reads metadata and partitions items for parallel checking.
@@ -69,31 +69,34 @@ func collectCheckItems(sourceDir string, repos []string, skills []string) (
 		})
 	}
 
+	// Load centralized metadata store once for all skills.
+	store := install.LoadMetadataOrNew(sourceDir)
+
 	urlGroups := make(map[string][]skillWithMeta)
 	var localResults []checkSkillResult
 
 	for _, skill := range skills {
 		skillPath := filepath.Join(sourceDir, skill)
-		meta, err := install.ReadMeta(skillPath)
+		entry := store.GetByPath(skill)
 
-		if err != nil || meta == nil || meta.RepoURL == "" {
+		if entry == nil || entry.RepoURL == "" {
 			result := checkSkillResult{Name: skill, Status: "local"}
-			if meta != nil {
-				result.Source = meta.Source
-				result.Version = meta.Version
-				if !meta.InstalledAt.IsZero() {
-					result.InstalledAt = meta.InstalledAt.Format("2006-01-02")
+			if entry != nil {
+				result.Source = entry.Source
+				result.Version = entry.Version
+				if !entry.InstalledAt.IsZero() {
+					result.InstalledAt = entry.InstalledAt.Format("2006-01-02")
 				}
 			}
 			localResults = append(localResults, result)
 			continue
 		}
 
-		groupKey := urlBranchKey(meta.RepoURL, meta.Branch)
+		groupKey := urlBranchKey(entry.RepoURL, entry.Branch)
 		urlGroups[groupKey] = append(urlGroups[groupKey], skillWithMeta{
 			name: skill,
 			path: skillPath,
-			meta: meta,
+			meta: entry,
 		})
 	}
 
@@ -171,6 +174,9 @@ func cmdCheck(args []string) error {
 
 	applyModeLabel(mode)
 
+	// Extract kind filter (e.g. "skillshare check agents" or "--all").
+	kind, rest := parseKindArgWithAll(rest)
+
 	scope := "global"
 	if mode == modeProject {
 		scope = "project"
@@ -188,6 +194,12 @@ func cmdCheck(args []string) error {
 	cfgPath := config.ConfigPath()
 	if mode == modeProject {
 		cfgPath = config.ProjectConfigPath(cwd)
+		if kind == kindAgents {
+			agentsDir := filepath.Join(cwd, ".skillshare", "agents")
+			renderAgentCheck(agentsDir, opts.groups, opts.json)
+			logCheckOp(cfgPath, 0, 0, 0, 0, scope, start, nil)
+			return nil
+		}
 		cmdErr := cmdCheckProject(cwd, opts)
 		logCheckOp(cfgPath, 0, 0, 0, 0, scope, start, cmdErr)
 		return cmdErr
@@ -196,6 +208,14 @@ func cmdCheck(args []string) error {
 	cfg, err := config.Load()
 	if err != nil {
 		return err
+	}
+
+	// Agent-only check: scan agents source directory and skip repo checks.
+	if kind == kindAgents {
+		agentsDir := cfg.EffectiveAgentsSource()
+		renderAgentCheck(agentsDir, opts.groups, opts.json)
+		logCheckOp(cfgPath, 0, 0, 0, 0, scope, start, nil)
+		return nil
 	}
 
 	// No names and no groups → check all (existing behavior)
@@ -522,7 +542,7 @@ func resolveSkillStatuses(
 		// Pre-fill base result fields for each skill
 		type pending struct {
 			result checkSkillResult
-			meta   *install.SkillMeta
+			meta   *install.MetadataEntry
 		}
 		items := make([]pending, len(group))
 		for i, sw := range group {
@@ -631,13 +651,14 @@ func runCheckFiltered(sourceDir string, opts *checkOptions) error {
 		resolveSpinner = ui.StartSpinner("Resolving skills...")
 	}
 
+	checkStore, _ := install.LoadMetadata(sourceDir)
 	var targets []updateTarget
 	seen := map[string]bool{}
 	var resolveWarnings []string
 
 	for _, name := range opts.names {
 		// Check group directory first (same logic as update)
-		if isGroupDir(name, sourceDir) {
+		if isGroupDir(name, sourceDir, checkStore) {
 			groupMatches, groupErr := resolveGroupUpdatable(name, sourceDir)
 			if groupErr != nil {
 				resolveWarnings = append(resolveWarnings, fmt.Sprintf("%s: %v", name, groupErr))
@@ -727,10 +748,12 @@ func runCheckFiltered(sourceDir string, opts *checkOptions) error {
 		// Single skill: show per-skill detail like update does
 		if len(targets) == 1 && !targets[0].isRepo {
 			t := targets[0]
-			skillPath := filepath.Join(sourceDir, t.name)
-			if meta, metaErr := install.ReadMeta(skillPath); metaErr == nil && meta != nil && meta.Source != "" {
-				ui.StepContinue("Skill", t.name)
-				ui.StepContinue("Source", meta.Source)
+			detailStore, _ := install.LoadMetadata(sourceDir)
+			if detailStore != nil {
+				if entry := detailStore.Get(t.name); entry != nil && entry.Source != "" {
+					ui.StepContinue("Skill", t.name)
+					ui.StepContinue("Source", entry.Source)
+				}
 			}
 		}
 	}
@@ -892,8 +915,78 @@ func formatSourceShort(source string) string {
 	return source
 }
 
+// renderAgentCheck runs CheckAgents and displays results (text or JSON).
+// If groups is non-empty, only agents in those group subdirectories are shown.
+func renderAgentCheck(agentsDir string, groups []string, jsonMode bool) {
+	agentResults := check.CheckAgents(agentsDir)
+
+	if len(groups) > 0 {
+		filtered, err := filterAgentResultsByGroups(agentResults, groups, agentsDir)
+		if err != nil {
+			if jsonMode {
+				writeJSONError(err) //nolint:errcheck
+				return
+			}
+			ui.Error("%v", err)
+			return
+		}
+		agentResults = filtered
+	}
+
+	trackedIndices := make([]int, 0, len(agentResults))
+	tracked := make([]check.AgentCheckResult, 0, len(agentResults))
+	for i := range agentResults {
+		if agentResults[i].Source != "" {
+			trackedIndices = append(trackedIndices, i)
+			tracked = append(tracked, agentResults[i])
+		}
+	}
+	if len(tracked) > 0 {
+		if jsonMode {
+			check.EnrichAgentResultsWithRemote(tracked, nil)
+		} else {
+			sp := ui.StartSpinner(fmt.Sprintf("Checking %d tracked agent(s)...", len(tracked)))
+			check.EnrichAgentResultsWithRemote(tracked, func() { sp.Success("Check complete") })
+			fmt.Println()
+		}
+		for i, idx := range trackedIndices {
+			agentResults[idx] = tracked[i]
+		}
+	}
+
+	if jsonMode {
+		out, _ := json.MarshalIndent(agentResults, "", "  ")
+		fmt.Println(string(out))
+		return
+	}
+	ui.Header(ui.WithModeLabel("Checking agents"))
+	ui.StepStart("Agents source", agentsDir)
+	if len(agentResults) == 0 {
+		ui.Info("No agents found")
+	} else {
+		fmt.Println()
+		for _, r := range agentResults {
+			switch r.Status {
+			case "up_to_date":
+				ui.ListItem("success", r.Name, "up to date")
+			case "update_available":
+				ui.ListItem("warning", r.Name, "update available")
+			case "drifted":
+				ui.ListItem("warning", r.Name, r.Message)
+			case "dirty":
+				ui.ListItem("warning", r.Name, r.Message)
+			case "local":
+				ui.ListItem("info", r.Name, "local agent")
+			case "error":
+				ui.ListItem("error", r.Name, r.Message)
+			}
+		}
+	}
+	fmt.Println()
+}
+
 func printCheckHelp() {
-	fmt.Println(`Usage: skillshare check [name...] [options]
+	fmt.Println(`Usage: skillshare check [agents] [name...] [options]
        skillshare check --group <group> [options]
 
 Check for available updates to tracked repositories and installed skills.
@@ -908,11 +1001,12 @@ Arguments:
   name...                Skill name(s) or tracked repo name(s) (optional)
 
 Options:
-  --group, -G <name>  Check all updatable skills in a group (repeatable)
-  --project, -p       Check project-level skills (.skillshare/)
-  --global, -g        Check global skills (~/.config/skillshare)
-  --json              Output results as JSON
-  --help, -h          Show this help
+  --all              Check both skills and agents
+  --group, -G <name> Check all updatable skills in a group (repeatable)
+  --project, -p      Check project-level skills (.skillshare/)
+  --global, -g       Check global skills (~/.config/skillshare)
+  --json             Output results as JSON
+  --help, -h         Show this help
 
 Examples:
   skillshare check                     # Check all items
@@ -921,5 +1015,8 @@ Examples:
   skillshare check --group frontend    # Check all skills in frontend/
   skillshare check x -G backend        # Mix names and groups
   skillshare check --json              # Output as JSON (for CI)
-  skillshare check -p                  # Check project skills`)
+  skillshare check -p                  # Check project skills
+  skillshare check agents              # Check all agents
+  skillshare check agents -G demo      # Check agents in demo/
+  skillshare check --all               # Check skills + agents`)
 }

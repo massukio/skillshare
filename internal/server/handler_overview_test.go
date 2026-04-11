@@ -4,6 +4,8 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"testing"
 )
 
@@ -47,6 +49,34 @@ func TestHandleOverview_WithSkills(t *testing.T) {
 	json.Unmarshal(rr.Body.Bytes(), &resp)
 	if resp["skillCount"].(float64) != 2 {
 		t.Errorf("expected 2 skills, got %v", resp["skillCount"])
+	}
+}
+
+func TestHandleOverview_AgentCountIncludesNestedAgents(t *testing.T) {
+	s, _ := newTestServer(t)
+	agentsDir := s.agentsSource()
+	if err := os.MkdirAll(filepath.Join(agentsDir, "demo"), 0755); err != nil {
+		t.Fatalf("mkdir agents dir: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(agentsDir, "top-level.md"), []byte("# Top"), 0644); err != nil {
+		t.Fatalf("write top-level agent: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(agentsDir, "demo", "nested-agent.md"), []byte("# Nested"), 0644); err != nil {
+		t.Fatalf("write nested agent: %v", err)
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "/api/overview", nil)
+	rr := httptest.NewRecorder()
+	s.handler.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rr.Code, rr.Body.String())
+	}
+
+	var resp map[string]any
+	json.Unmarshal(rr.Body.Bytes(), &resp)
+	if resp["agentCount"].(float64) != 2 {
+		t.Errorf("expected 2 agents including nested entries, got %v", resp["agentCount"])
 	}
 }
 

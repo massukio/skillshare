@@ -43,11 +43,20 @@ func discoverFromGitWithProgressImpl(source *Source, onProgress ProgressCallback
 		}
 	}
 
+	// Discover agents (agents/ dir or pure agent repo fallback)
+	agents := discoverAgents(repoPath, len(skills) > 0)
+	skills, agents, err = constrainDiscoveryToExplicitSkill(source, skills, agents)
+	if err != nil {
+		_ = os.RemoveAll(tempDir)
+		return nil, err
+	}
+
 	commitHash, _ := getGitCommit(repoPath)
 
 	return &DiscoveryResult{
 		RepoPath:   tempDir,
 		Skills:     skills,
+		Agents:     agents,
 		Source:     source,
 		CommitHash: commitHash,
 	}, nil
@@ -56,6 +65,44 @@ func discoverFromGitWithProgressImpl(source *Source, onProgress ProgressCallback
 // discoverFromGitImpl is the non-progress variant used by the public facade.
 func discoverFromGitImpl(source *Source) (*DiscoveryResult, error) {
 	return discoverFromGitWithProgressImpl(source, nil)
+}
+
+func discoverLocalImpl(source *Source) (*DiscoveryResult, error) {
+	if source == nil {
+		return nil, fmt.Errorf("source is required")
+	}
+	if source.Type != SourceTypeLocalPath {
+		return nil, fmt.Errorf("source is not a local path")
+	}
+
+	info, err := os.Stat(source.Path)
+	if err != nil {
+		return nil, fmt.Errorf("cannot access source path: %w", err)
+	}
+	if !info.IsDir() {
+		return nil, fmt.Errorf("source path is not a directory: %s", source.Path)
+	}
+
+	skills := discoverSkills(source.Path, true)
+	for i := range skills {
+		if skills[i].Path == "." {
+			skills[i].Name = source.Name
+			break
+		}
+	}
+
+	agents := discoverAgents(source.Path, len(skills) > 0)
+	skills, agents, err = constrainDiscoveryToExplicitSkill(source, skills, agents)
+	if err != nil {
+		return nil, err
+	}
+
+	return &DiscoveryResult{
+		RepoPath: source.Path,
+		Skills:   skills,
+		Agents:   agents,
+		Source:   source,
+	}, nil
 }
 
 // resolveSubdir resolves a subdirectory path within a cloned repo.
@@ -96,6 +143,20 @@ func resolveSubdir(repoPath, subdir string) (string, error) {
 		return "", fmt.Errorf("subdirectory '%s' is ambiguous — multiple matches found:\n  %s",
 			subdir, strings.Join(candidates, "\n  "))
 	}
+}
+
+func constrainDiscoveryToExplicitSkill(source *Source, skills []SkillInfo, agents []AgentInfo) ([]SkillInfo, []AgentInfo, error) {
+	if source == nil || !source.TargetsExplicitSkill() {
+		return skills, agents, nil
+	}
+
+	for _, skill := range skills {
+		if skill.Path == "." {
+			return []SkillInfo{skill}, nil, nil
+		}
+	}
+
+	return nil, nil, fmt.Errorf("explicit skill target does not resolve to a root SKILL.md: %s", source.Raw)
 }
 
 // discoverSkills finds directories containing SKILL.md
@@ -162,6 +223,87 @@ func discoverSkills(repoPath string, includeRoot bool) []SkillInfo {
 	return skills
 }
 
+// discoverAgents finds .md files in an agents/ convention directory.
+// Also detects "pure agent repos" — repos with no SKILL.md and no agents/ dir
+// but with .md files at root (per D5 rule 4).
+func discoverAgents(repoPath string, hasSkills bool) []AgentInfo {
+	var agents []AgentInfo
+
+	// Rule 2: Check agents/ convention directory
+	agentsDir := filepath.Join(repoPath, "agents")
+	if info, err := os.Stat(agentsDir); err == nil && info.IsDir() {
+		agents = append(agents, scanAgentDir(repoPath, agentsDir)...)
+		return agents
+	}
+
+	// Rule 4: Pure agent repo fallback — no skills, no agents/ dir, root has .md files
+	if !hasSkills {
+		agents = append(agents, scanAgentDir(repoPath, repoPath)...)
+	}
+
+	return agents
+}
+
+// scanAgentDir scans a directory for .md agent files, excluding conventional files.
+func scanAgentDir(repoRoot, dir string) []AgentInfo {
+	var agents []AgentInfo
+
+	filepath.Walk(dir, func(path string, info os.FileInfo, err error) error {
+		if err != nil {
+			return nil
+		}
+
+		if info.IsDir() {
+			name := info.Name()
+			if name == ".git" || TargetDotDirs[name] {
+				return filepath.SkipDir
+			}
+			return nil
+		}
+
+		if !strings.HasSuffix(strings.ToLower(info.Name()), ".md") {
+			return nil
+		}
+
+		// Skip conventional excludes
+		if conventionalAgentExcludes[info.Name()] {
+			return nil
+		}
+
+		// Skip hidden files
+		if strings.HasPrefix(info.Name(), ".") {
+			return nil
+		}
+
+		relPath, relErr := filepath.Rel(repoRoot, path)
+		if relErr != nil {
+			return nil
+		}
+		relPath = strings.ReplaceAll(relPath, "\\", "/")
+
+		name := strings.TrimSuffix(info.Name(), ".md")
+
+		agents = append(agents, AgentInfo{
+			Name:     name,
+			Path:     relPath,
+			FileName: info.Name(),
+		})
+
+		return nil
+	})
+
+	return agents
+}
+
+var conventionalAgentExcludes = map[string]bool{
+	"README.md":    true,
+	"CHANGELOG.md": true,
+	"LICENSE.md":   true,
+	"HISTORY.md":   true,
+	"SECURITY.md":  true,
+	"SKILL.md":     true,
+}
+
 // DiscoverFromGitSubdir clones a repo and discovers skills within a subdirectory
 // Unlike DiscoverFromGit, this includes root-level SKILL.md of the subdir
 
@@ -194,9 +336,16 @@ func discoverFromGitSubdirWithProgressImpl(source *Source, onProgress ProgressCa
 					commitHash = hash
 				}
 				skills := discoverSkills(subdirPath, true)
+				agents := discoverAgents(subdirPath, len(skills) > 0)
+				skills, agents, err = constrainDiscoveryToExplicitSkill(source, skills, agents)
+				if err != nil {
+					_ = os.RemoveAll(tempDir)
+					return nil, err
+				}
 				return &DiscoveryResult{
 					RepoPath:   tempDir,
 					Skills:     skills,
+					Agents:     agents,
 					Source:     source,
 					CommitHash: commitHash,
 					Warnings:   warnings,
@@ -221,9 +370,16 @@ func discoverFromGitSubdirWithProgressImpl(source *Source, onProgress ProgressCa
 		if dlErr == nil {
 			commitHash = hash
 			skills := discoverSkills(subdirPath, true)
+			agents := discoverAgents(subdirPath, len(skills) > 0)
+			skills, agents, err = constrainDiscoveryToExplicitSkill(source, skills, agents)
+			if err != nil {
+				_ = os.RemoveAll(tempDir)
+				return nil, err
+			}
 			return &DiscoveryResult{
 				RepoPath:   tempDir,
 				Skills:     skills,
+				Agents:     agents,
 				Source:     source,
 				CommitHash: commitHash,
 			}, nil
@@ -258,9 +414,16 @@ func discoverFromGitSubdirWithProgressImpl(source *Source, onProgress ProgressCa
 	}
 
 	skills := discoverSkills(subdirPath, true)
+	agents := discoverAgents(subdirPath, len(skills) > 0)
+	skills, agents, err = constrainDiscoveryToExplicitSkill(source, skills, agents)
+	if err != nil {
+		_ = os.RemoveAll(tempDir)
+		return nil, err
+	}
 	return &DiscoveryResult{
 		RepoPath:   tempDir,
 		Skills:     skills,
+		Agents:     agents,
 		Source:     source,
 		CommitHash: commitHash,
 		Warnings:   warnings,

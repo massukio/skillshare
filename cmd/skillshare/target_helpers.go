@@ -32,11 +32,26 @@ func (o filterUpdateOpts) hasUpdates() bool {
 		len(o.RemoveInclude) > 0 || len(o.RemoveExclude) > 0
 }
 
+type parsedTargetFilterFlags struct {
+	Skills filterUpdateOpts
+	Agents filterUpdateOpts
+}
+
+func (o parsedTargetFilterFlags) hasUpdates() bool {
+	return o.Skills.hasUpdates() || o.Agents.hasUpdates()
+}
+
+type parsedTargetSettingFlags struct {
+	SkillMode string
+	AgentMode string
+	Naming    string
+}
+
 // parseFilterFlags extracts --add-include, --add-exclude, --remove-include,
-// --remove-exclude flags from args.  Returns the parsed opts and any
-// remaining (non-filter) arguments.
-func parseFilterFlags(args []string) (filterUpdateOpts, []string, error) {
-	var opts filterUpdateOpts
+// --remove-exclude flags from args for both skills and agents.
+// Returns the parsed opts and any remaining (non-filter) arguments.
+func parseFilterFlags(args []string) (parsedTargetFilterFlags, []string, error) {
+	var opts parsedTargetFilterFlags
 	var rest []string
 
 	for i := 0; i < len(args); i++ {
@@ -46,31 +61,84 @@ func parseFilterFlags(args []string) (filterUpdateOpts, []string, error) {
 				return opts, nil, fmt.Errorf("--add-include requires a value")
 			}
 			i++
-			opts.AddInclude = append(opts.AddInclude, args[i])
+			opts.Skills.AddInclude = append(opts.Skills.AddInclude, args[i])
 		case "--add-exclude":
 			if i+1 >= len(args) {
 				return opts, nil, fmt.Errorf("--add-exclude requires a value")
 			}
 			i++
-			opts.AddExclude = append(opts.AddExclude, args[i])
+			opts.Skills.AddExclude = append(opts.Skills.AddExclude, args[i])
 		case "--remove-include":
 			if i+1 >= len(args) {
 				return opts, nil, fmt.Errorf("--remove-include requires a value")
 			}
 			i++
-			opts.RemoveInclude = append(opts.RemoveInclude, args[i])
+			opts.Skills.RemoveInclude = append(opts.Skills.RemoveInclude, args[i])
 		case "--remove-exclude":
 			if i+1 >= len(args) {
 				return opts, nil, fmt.Errorf("--remove-exclude requires a value")
 			}
 			i++
-			opts.RemoveExclude = append(opts.RemoveExclude, args[i])
+			opts.Skills.RemoveExclude = append(opts.Skills.RemoveExclude, args[i])
+		case "--add-agent-include":
+			if i+1 >= len(args) {
+				return opts, nil, fmt.Errorf("--add-agent-include requires a value")
+			}
+			i++
+			opts.Agents.AddInclude = append(opts.Agents.AddInclude, args[i])
+		case "--add-agent-exclude":
+			if i+1 >= len(args) {
+				return opts, nil, fmt.Errorf("--add-agent-exclude requires a value")
+			}
+			i++
+			opts.Agents.AddExclude = append(opts.Agents.AddExclude, args[i])
+		case "--remove-agent-include":
+			if i+1 >= len(args) {
+				return opts, nil, fmt.Errorf("--remove-agent-include requires a value")
+			}
+			i++
+			opts.Agents.RemoveInclude = append(opts.Agents.RemoveInclude, args[i])
+		case "--remove-agent-exclude":
+			if i+1 >= len(args) {
+				return opts, nil, fmt.Errorf("--remove-agent-exclude requires a value")
+			}
+			i++
+			opts.Agents.RemoveExclude = append(opts.Agents.RemoveExclude, args[i])
 		default:
 			rest = append(rest, args[i])
 		}
 	}
 
 	return opts, rest, nil
+}
+
+func parseTargetSettingFlags(args []string) (parsedTargetSettingFlags, error) {
+	var settings parsedTargetSettingFlags
+
+	for i := 0; i < len(args); i++ {
+		switch args[i] {
+		case "--mode", "-m":
+			if i+1 >= len(args) {
+				return settings, fmt.Errorf("--mode requires a value (merge, symlink, or copy)")
+			}
+			settings.SkillMode = args[i+1]
+			i++
+		case "--agent-mode":
+			if i+1 >= len(args) {
+				return settings, fmt.Errorf("--agent-mode requires a value (merge, symlink, or copy)")
+			}
+			settings.AgentMode = args[i+1]
+			i++
+		case "--target-naming":
+			if i+1 >= len(args) {
+				return settings, fmt.Errorf("--target-naming requires a value (flat or standard)")
+			}
+			settings.Naming = args[i+1]
+			i++
+		}
+	}
+
+	return settings, nil
 }
 
 // applyFilterUpdates modifies include/exclude slices according to opts.
@@ -118,6 +186,29 @@ func applyFilterUpdates(include, exclude *[]string, opts filterUpdateOpts) ([]st
 	}
 
 	return changes, nil
+}
+
+func scopeFilterChanges(scope string, changes []string) []string {
+	if scope != "agents" {
+		return changes
+	}
+
+	scoped := make([]string, len(changes))
+	for i, change := range changes {
+		switch {
+		case strings.HasPrefix(change, "added include: "):
+			scoped[i] = strings.Replace(change, "added include: ", "added agent include: ", 1)
+		case strings.HasPrefix(change, "added exclude: "):
+			scoped[i] = strings.Replace(change, "added exclude: ", "added agent exclude: ", 1)
+		case strings.HasPrefix(change, "removed include: "):
+			scoped[i] = strings.Replace(change, "removed include: ", "removed agent include: ", 1)
+		case strings.HasPrefix(change, "removed exclude: "):
+			scoped[i] = strings.Replace(change, "removed exclude: ", "removed agent exclude: ", 1)
+		default:
+			scoped[i] = change
+		}
+	}
+	return scoped
 }
 
 func containsPattern(patterns []string, p string) bool {

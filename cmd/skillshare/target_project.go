@@ -11,6 +11,7 @@ import (
 	"skillshare/internal/config"
 	"skillshare/internal/oplog"
 	"skillshare/internal/sync"
+	"skillshare/internal/targetsummary"
 	"skillshare/internal/ui"
 	"skillshare/internal/utils"
 	"skillshare/internal/validate"
@@ -277,16 +278,27 @@ func targetListProjectWithJSON(root string, jsonOutput bool) error {
 	})
 
 	if jsonOutput {
+		agentBuilder, err := targetsummary.NewProjectBuilder(root)
+		if err != nil {
+			return err
+		}
+
 		var items []targetListJSONItem
 		for _, entry := range targets {
 			sc := entry.SkillsConfig()
-			items = append(items, targetListJSONItem{
+			item := targetListJSONItem{
 				Name:    entry.Name,
 				Path:    projectTargetDisplayPath(entry),
 				Mode:    getTargetMode(sc.Mode, ""),
 				Include: sc.Include,
 				Exclude: sc.Exclude,
-			})
+			}
+			agentSummary, err := agentBuilder.ProjectTarget(entry)
+			if err != nil {
+				return err
+			}
+			applyTargetListAgentSummary(&item, agentSummary)
+			items = append(items, item)
 		}
 		output := struct {
 			Targets []targetListJSONItem `json:"targets"`
@@ -294,16 +306,13 @@ func targetListProjectWithJSON(root string, jsonOutput bool) error {
 		return writeJSON(&output)
 	}
 
-	ui.Header("Configured Targets (project)")
-	for _, entry := range targets {
-		displayPath := projectTargetDisplayPath(entry)
-		sc := entry.SkillsConfig()
-		mode := sc.Mode
-		if mode == "" {
-			mode = "merge"
-		}
-		fmt.Printf("  %-12s %s (%s)\n", entry.Name, displayPath, mode)
+	items, err := buildTargetTUIItems(true, root)
+	if err != nil {
+		return err
 	}
+
+	ui.Header("Configured Targets (project)")
+	printTargetListPlain(items)
 
 	return nil
 }
@@ -320,23 +329,9 @@ func targetInfoProject(name string, args []string, root string) error {
 	if err != nil {
 		return err
 	}
-
-	var newMode, newNaming string
-	for i := 0; i < len(remaining); i++ {
-		switch remaining[i] {
-		case "--mode", "-m":
-			if i+1 >= len(remaining) {
-				return fmt.Errorf("--mode requires a value (merge, symlink, or copy)")
-			}
-			newMode = remaining[i+1]
-			i++
-		case "--target-naming":
-			if i+1 >= len(remaining) {
-				return fmt.Errorf("--target-naming requires a value (flat or standard)")
-			}
-			newNaming = remaining[i+1]
-			i++
-		}
+	settings, err := parseTargetSettingFlags(remaining)
+	if err != nil {
+		return err
 	}
 
 	cfg, err := config.LoadProject(root)
@@ -360,13 +355,55 @@ func targetInfoProject(name string, args []string, root string) error {
 	if filterOpts.hasUpdates() {
 		start := time.Now()
 		entry := &cfg.Targets[targetIdx]
-		s := entry.EnsureSkills()
-		changes, fErr := applyFilterUpdates(&s.Include, &s.Exclude, filterOpts)
-		if fErr != nil {
-			return fErr
+		var changes []string
+		mutated := false
+
+		if filterOpts.Skills.hasUpdates() {
+			s := entry.EnsureSkills()
+			skillChanges, fErr := applyFilterUpdates(&s.Include, &s.Exclude, filterOpts.Skills)
+			if fErr != nil {
+				return fErr
+			}
+			changes = append(changes, skillChanges...)
+			mutated = true
 		}
-		if err := cfg.Save(root); err != nil {
-			return err
+
+		if filterOpts.Agents.hasUpdates() {
+			agentBuilder, buildErr := targetsummary.NewProjectBuilder(root)
+			if buildErr != nil {
+				return buildErr
+			}
+			agentSummary, buildErr := agentBuilder.ProjectTarget(*entry)
+			if buildErr != nil {
+				return buildErr
+			}
+			if agentSummary == nil {
+				return fmt.Errorf("target '%s' does not have an agents path", name)
+			}
+			if agentSummary.Mode == "symlink" {
+				return fmt.Errorf("target '%s' agent include/exclude filters are ignored in symlink mode; use --agent-mode merge or --agent-mode copy first", name)
+			}
+
+			ac := entry.AgentsConfig()
+			include := append([]string(nil), ac.Include...)
+			exclude := append([]string(nil), ac.Exclude...)
+			agentChanges, fErr := applyFilterUpdates(&include, &exclude, filterOpts.Agents)
+			if fErr != nil {
+				return fErr
+			}
+			if len(agentChanges) > 0 {
+				a := entry.EnsureAgents()
+				a.Include = include
+				a.Exclude = exclude
+				mutated = true
+			}
+			changes = append(changes, scopeFilterChanges("agents", agentChanges)...)
+		}
+
+		if mutated {
+			if err := cfg.Save(root); err != nil {
+				return err
+			}
 		}
 		for _, change := range changes {
 			ui.Success("%s: %s", name, change)
@@ -385,12 +422,16 @@ func targetInfoProject(name string, args []string, root string) error {
 		return nil
 	}
 
-	if newMode != "" {
-		return updateTargetModeProject(cfg, targetIdx, newMode, root)
+	if settings.SkillMode != "" {
+		return updateTargetModeProject(cfg, targetIdx, settings.SkillMode, root)
 	}
 
-	if newNaming != "" {
-		return updateTargetNamingProject(cfg, targetIdx, newNaming, root)
+	if settings.AgentMode != "" {
+		return updateTargetAgentModeProject(cfg, targetIdx, settings.AgentMode, root)
+	}
+
+	if settings.Naming != "" {
+		return updateTargetNamingProject(cfg, targetIdx, settings.Naming, root)
 	}
 
 	targets, err := config.ResolveProjectTargets(root, cfg)
@@ -405,6 +446,14 @@ func targetInfoProject(name string, args []string, root string) error {
 
 	targetEntry := cfg.Targets[targetIdx]
 	sourcePath := filepath.Join(root, ".skillshare", "skills")
+	agentBuilder, err := targetsummary.NewProjectBuilder(root)
+	if err != nil {
+		return err
+	}
+	agentSummary, err := agentBuilder.ProjectTarget(targetEntry)
+	if err != nil {
+		return err
+	}
 
 	sc := targetEntry.SkillsConfig()
 	mode := sc.Mode
@@ -439,6 +488,7 @@ func targetInfoProject(name string, args []string, root string) error {
 
 	fmt.Printf("  Include: %s\n", formatFilterList(sc.Include))
 	fmt.Printf("  Exclude: %s\n", formatFilterList(sc.Exclude))
+	printTargetAgentSection(agentSummary)
 
 	return nil
 }
@@ -460,6 +510,38 @@ func updateTargetModeProject(cfg *config.ProjectConfig, idx int, newMode string,
 	}
 
 	ui.Success("Changed %s mode: %s -> %s", entry.Name, oldMode, newMode)
+	ui.Info("Run 'skillshare sync' to apply the new mode")
+	return nil
+}
+
+func updateTargetAgentModeProject(cfg *config.ProjectConfig, idx int, newMode string, root string) error {
+	if newMode != "merge" && newMode != "symlink" && newMode != "copy" {
+		return fmt.Errorf("invalid agent mode '%s'. Use 'merge', 'symlink', or 'copy'", newMode)
+	}
+
+	entry := &cfg.Targets[idx]
+	agentBuilder, err := targetsummary.NewProjectBuilder(root)
+	if err != nil {
+		return err
+	}
+	agentSummary, err := agentBuilder.ProjectTarget(*entry)
+	if err != nil {
+		return err
+	}
+	if agentSummary == nil {
+		return fmt.Errorf("target '%s' does not have an agents path", entry.Name)
+	}
+
+	oldMode := agentSummary.Mode
+	entry.EnsureAgents().Mode = newMode
+	if err := cfg.Save(root); err != nil {
+		return err
+	}
+
+	ui.Success("Changed %s agent mode: %s -> %s", entry.Name, oldMode, newMode)
+	if newMode == "symlink" && (len(agentSummary.Include) > 0 || len(agentSummary.Exclude) > 0) {
+		ui.Warning("Agent include/exclude filters are ignored in symlink mode")
+	}
 	ui.Info("Run 'skillshare sync' to apply the new mode")
 	return nil
 }

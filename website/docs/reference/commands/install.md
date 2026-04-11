@@ -258,6 +258,8 @@ See [Project Setup](/docs/how-to/sharing/project-setup) for the full guide.
 | `--update` | `-u` | Update if exists (git pull or reinstall) |
 | `--branch <name>` | `-b` | Git branch to clone from (default: remote default branch) |
 | `--track` | `-t` | Keep `.git` for tracked repos |
+| `--kind <skill\|agent>` | | Limit install to one resource kind |
+| `--agent <names>` | `-a` | Select specific agents from a repo (comma-separated) |
 | `--skill` | `-s` | Select specific skills from multi-skill repo (comma-separated; supports glob patterns like `core-*`) |
 | `--exclude` | | Skip specific skills during install (comma-separated; supports glob patterns like `test-*`) |
 | `--all` | | Install all discovered skills without prompting |
@@ -268,7 +270,7 @@ See [Project Setup](/docs/how-to/sharing/project-setup) for the full guide.
 | `--project` | `-p` | Install into project `.skillshare/skills/` |
 | `--global` | `-g` | Install into global `~/.config/skillshare/skills/` |
 | `--dry-run` | `-n` | Preview only |
-| `--json` | | Output as JSON (implies `--force` and `--all`, non-interactive) |
+| `--json` | | Output as JSON (implies `--force`; also implies non-interactive selection when no `--skill`/`--agent` filter is given) |
 
 ## JSON Output
 
@@ -302,6 +304,23 @@ skillshare install anthropics/skills --json --into frontend
   "skills": ["pdf", "commit"],
   "failed": [],
   "duration": "1.890s"
+}
+```
+
+For agent-only installs, the JSON output still uses the `skills` array to report installed names:
+
+```bash
+skillshare install github.com/user/agents --kind agent --json
+```
+
+```json
+{
+  "source": "github.com/user/agents",
+  "tracked": false,
+  "dry_run": false,
+  "skills": ["reviewer", "tutor"],
+  "failed": [],
+  "duration": "1.234s"
 }
 ```
 
@@ -679,6 +698,29 @@ Lines starting with `#` are comments. Empty lines are ignored.
 | **When it applies** | During discovery (before selection) | After discovery (before prompt) |
 | **Scope** | All users installing from this repo | This install only |
 | **Requires** | Git repo with multiple skills | Git repo with multiple skills |
+
+## Agent Support
+
+When installing a repository, skillshare auto-detects agents (standalone `.md` files) alongside skills:
+
+- If the repo contains an `agents/` directory, `.md` files inside are discovered as agent candidates
+- If the repo has both `skills/` and `agents/`, both are installed
+- If the repo has only loose `.md` files at root (no `SKILL.md`), they are treated as agents
+
+### Explicit agent flags
+
+```bash
+# Install only agents from a repo
+skillshare install github.com/user/repo --kind agent
+
+# Install specific agents by name (-a shorthand)
+skillshare install github.com/user/repo -a tutor,reviewer
+
+# Combine with project mode
+skillshare install github.com/user/repo --kind agent -p
+```
+
+The `-a <name>` flag is the agent equivalent of `-s <name>` for skills. Agents are installed into `~/.config/skillshare/agents/` (global) or `.skillshare/agents/` (project). See [Agents](/docs/understand/agents) for the full concepts.
 
 ## After Installing
 

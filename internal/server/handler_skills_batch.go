@@ -7,7 +7,7 @@ import (
 	"strings"
 	"time"
 
-	"skillshare/internal/install"
+	"skillshare/internal/resource"
 	ssync "skillshare/internal/sync"
 	"skillshare/internal/utils"
 )
@@ -73,8 +73,12 @@ func (s *Server) handleBatchSetTargets(w http.ResponseWriter, r *http.Request) {
 	var updated, skipped int
 	var errors []string
 
-	// Collect paths that need meta hash refresh (outside the lock).
-	var updatedPaths []string
+	// Collect skills that need meta hash refresh (outside the lock).
+	type updatedSkill struct {
+		name string
+		path string
+	}
+	var updatedSkills []updatedSkill
 
 	// Acquire write lock only for the file-write loop.
 	s.mu.Lock()
@@ -101,14 +105,20 @@ func (s *Server) handleBatchSetTargets(w http.ResponseWriter, r *http.Request) {
 			continue
 		}
 
-		updatedPaths = append(updatedPaths, d.SourcePath)
+		updatedSkills = append(updatedSkills, updatedSkill{
+			name: filepath.Base(d.SourcePath),
+			path: d.SourcePath,
+		})
 		updated++
 	}
 	s.mu.Unlock()
 
 	// Recompute file hashes outside the lock so reads aren't blocked.
-	for _, p := range updatedPaths {
-		install.RefreshMetaHashes(p)
+	for _, sk := range updatedSkills {
+		s.skillsStore.RefreshHashes(sk.name, sk.path)
+	}
+	if len(updatedSkills) > 0 {
+		s.skillsStore.Save(s.cfg.Source) //nolint:errcheck
 	}
 
 	s.writeOpsLog("batch-set-targets", "ok", start, map[string]any{
@@ -182,7 +192,8 @@ func (s *Server) handleSetSkillTargets(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 
-		install.RefreshMetaHashes(d.SourcePath)
+		s.skillsStore.RefreshHashes(d.RelPath, d.SourcePath)
+		s.skillsStore.Save(s.cfg.Source) //nolint:errcheck
 
 		s.writeOpsLog("set-skill-targets", "ok", start, map[string]any{
 			"name":   name,
@@ -194,5 +205,42 @@ func (s *Server) handleSetSkillTargets(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	writeError(w, http.StatusNotFound, "skill not found: "+name)
+	// Try agents if skill not found
+	s.mu.RLock()
+	agentsSource := s.agentsSource()
+	s.mu.RUnlock()
+
+	if agentsSource != "" {
+		agents, _ := resource.AgentKind{}.Discover(agentsSource)
+		for _, d := range agents {
+			if d.FlatName != name {
+				continue
+			}
+
+			var values []string
+			if req.Target != "" {
+				values = []string{req.Target}
+			}
+
+			s.mu.Lock()
+			err := utils.SetFrontmatterList(d.SourcePath, "targets", values)
+			s.mu.Unlock()
+
+			if err != nil {
+				writeError(w, http.StatusInternalServerError, "failed to update agent: "+err.Error())
+				return
+			}
+
+			s.writeOpsLog("set-agent-targets", "ok", start, map[string]any{
+				"name":   name,
+				"target": req.Target,
+				"scope":  "ui",
+			}, "")
+
+			writeJSON(w, map[string]any{"success": true})
+			return
+		}
+	}
+
+	writeError(w, http.StatusNotFound, "resource not found: "+name)
 }

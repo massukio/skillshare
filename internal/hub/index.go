@@ -64,24 +64,27 @@ func BuildIndex(sourcePath string, full bool, auditSkills bool) (*Index, error) 
 		return nil, err
 	}
 
+	// Load centralized metadata store once for all skills.
+	store := install.LoadMetadataOrNew(sourcePath)
+
 	entries := make([]SkillEntry, len(discovered))
 	for i, d := range discovered {
 		item := SkillEntry{
 			Name: filepath.Base(d.SourcePath),
 		}
 
-		// Determine source: prefer meta.Source (remote origin), fallback to relPath.
+		// Determine source: prefer entry.Source (remote origin), fallback to relPath.
 		source := d.RelPath
-		if meta, _ := install.ReadMeta(d.SourcePath); meta != nil {
-			if meta.Source != "" {
-				source = meta.Source
+		if entry := store.GetByPath(d.RelPath); entry != nil {
+			if entry.Source != "" {
+				source = entry.Source
 			}
 			if full {
-				item.Type = meta.Type
-				item.RepoURL = meta.RepoURL
-				item.Version = meta.Version
-				if !meta.InstalledAt.IsZero() {
-					item.InstalledAt = meta.InstalledAt.UTC().Format(time.RFC3339)
+				item.Type = entry.Type
+				item.RepoURL = entry.RepoURL
+				item.Version = entry.Version
+				if !entry.InstalledAt.IsZero() {
+					item.InstalledAt = entry.InstalledAt.UTC().Format(time.RFC3339)
 				}
 			}
 		}

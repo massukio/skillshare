@@ -15,8 +15,8 @@ See [Filtering Skills](/docs/how-to/daily-tasks/filtering-skills) for a scenario
 | Layer | Scope | Where to set | Syntax | Evaluated at |
 |-------|-------|-------------|--------|-------------|
 | `.skillignore` | Hides from all targets | Source dir or tracked repo root | [gitignore](https://git-scm.com/docs/gitignore) | Discovery |
-| SKILL.md `targets` | Restricts to listed targets | Per skill frontmatter | YAML list | Sync (parsed at discovery) |
-| Target include/exclude | Per target | `config.yaml` or CLI flags | Go [`filepath.Match`](https://pkg.go.dev/path/filepath#Match) glob | Sync |
+| SKILL.md `metadata.targets` | Restricts skills to listed targets | Per skill frontmatter | YAML list | Sync (parsed at discovery) |
+| Target include/exclude | Per target, per resource | `config.yaml` or CLI flags | Go [`filepath.Match`](https://pkg.go.dev/path/filepath#Match) glob | Sync |
 
 :::note Sync mode caveat
 All three layers only apply to **merge** and **copy** sync modes.
@@ -29,7 +29,7 @@ A skill must pass **all** layers to reach a target:
 
 1. **`.skillignore`** — evaluated at discovery. Matching skills never enter the sync pipeline.
 2. **Target include/exclude** — evaluated at sync (`FilterSkills`). Skills are discovered but skipped for non-matching targets.
-3. **SKILL.md `targets`** — evaluated at sync (`FilterSkillsByTarget`). Skills are restricted to their declared targets.
+3. **SKILL.md `metadata.targets`** — evaluated at sync (`FilterSkillsByTarget`). Skills are restricted to their declared targets.
 
 ## .skillignore
 
@@ -56,15 +56,15 @@ A skill must pass **all** layers to reach a target:
 **Format:** Top-level or nested under `metadata`:
 
 ```yaml
-# Either format works
-targets: [claude, cursor]
-
-# Or nested
+# Preferred
 metadata:
   targets: [claude, cursor]
+
+# Legacy fallback
+targets: [claude, cursor]
 ```
 
-**Behavior:** Whitelist — the skill only syncs to the listed targets. Omitting the field means sync to all targets.
+**Behavior:** Whitelist — the skill only syncs to the listed targets. Omitting the field means sync to all targets. If both `metadata.targets` and top-level `targets` are present, `metadata.targets` wins.
 
 **Aliases:** Target names support aliases. `claude` matches a target configured as `claude-code`. See [Supported Targets](/docs/reference/targets/supported-targets).
 
@@ -75,14 +75,20 @@ metadata:
 **Set via CLI:**
 
 ```bash
+# Skills
 skillshare target claude --add-include "team-*"
 skillshare target cursor --add-exclude "legacy-*"
 skillshare target claude --remove-include "team-*"
+
+# Agents
+skillshare target claude --add-agent-include "team-*"
+skillshare target claude --add-agent-exclude "draft-*"
+skillshare target claude --remove-agent-include "team-*"
 ```
 
-**Stored in:** `config.yaml` under `targets.<name>.include` / `targets.<name>.exclude`.
+**Stored in:** `config.yaml` under `targets.<name>.include` / `targets.<name>.exclude` for skills, and `targets.<name>.agents.include` / `targets.<name>.agents.exclude` for agents.
 
-**Syntax:** Go [`filepath.Match`](https://pkg.go.dev/path/filepath#Match) glob patterns matched against the flat skill name (e.g., `_team__frontend__ui`).
+**Syntax:** Go [`filepath.Match`](https://pkg.go.dev/path/filepath#Match) glob patterns matched against the flat resource name. Skills use flat skill names (e.g., `_team__frontend__ui`); agents use flat `.md` filenames.
 
 | Supported | Not supported |
 |-----------|--------------|
@@ -90,7 +96,7 @@ skillshare target claude --remove-include "team-*"
 | `?` (single char) | `{a,b}` (brace expansion) |
 | `[abc]` (char class) | |
 
-**Precedence:** When both `include` and `exclude` are set, `include` is applied first, then `exclude`. A skill matching both is excluded.
+**Precedence:** When both `include` and `exclude` are set, `include` is applied first, then `exclude`. A matching resource that hits both is excluded.
 
 **Visual editor:** `skillshare ui` → Targets page → "Customize filters" button.
 

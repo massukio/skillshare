@@ -4,14 +4,17 @@ import (
 	"path/filepath"
 
 	"skillshare/internal/config"
+	"skillshare/internal/install"
 )
 
 type projectRuntime struct {
-	root       string
-	config     *config.ProjectConfig
-	registry   *config.Registry
-	sourcePath string
-	targets    map[string]config.TargetConfig
+	root             string
+	config           *config.ProjectConfig
+	skillsStore      *install.MetadataStore
+	agentsStore      *install.MetadataStore
+	sourcePath       string
+	agentsSourcePath string
+	targets          map[string]config.TargetConfig
 }
 
 func loadProjectRuntime(root string) (*projectRuntime, error) {
@@ -25,16 +28,26 @@ func loadProjectRuntime(root string) (*projectRuntime, error) {
 		return nil, err
 	}
 
-	reg, err := config.LoadRegistry(filepath.Join(root, ".skillshare"))
+	skillsDir := filepath.Join(root, ".skillshare", "skills")
+	agentsDir := filepath.Join(root, ".skillshare", "agents")
+
+	skillsStore, err := install.LoadMetadataWithMigration(skillsDir, "")
+	if err != nil {
+		return nil, err
+	}
+
+	agentsStore, err := install.LoadMetadataWithMigration(agentsDir, "agent")
 	if err != nil {
 		return nil, err
 	}
 
 	return &projectRuntime{
-		root:       root,
-		config:     cfg,
-		registry:   reg,
-		sourcePath: filepath.Join(root, ".skillshare", "skills"),
-		targets:    targets,
+		root:             root,
+		config:           cfg,
+		skillsStore:      skillsStore,
+		agentsStore:      agentsStore,
+		sourcePath:       skillsDir,
+		agentsSourcePath: agentsDir,
+		targets:          targets,
 	}, nil
 }

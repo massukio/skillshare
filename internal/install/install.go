@@ -10,12 +10,14 @@ import (
 // InstallOptions configures the install behavior
 type InstallOptions struct {
 	Name             string // Override skill name
+	Kind             string // "skill", "agent", or "" (auto-detect)
 	Force            bool   // Overwrite existing
 	DryRun           bool   // Preview only
 	Update           bool   // Update existing installation
 	Track            bool   // Install as tracked repository (preserves .git)
 	OnProgress       ProgressCallback
 	Skills           []string // Select specific skills from multi-skill repo (comma-separated)
+	AgentNames       []string // Select specific agents from repo (comma-separated)
 	Exclude          []string // Skills to exclude from installation (comma-separated)
 	All              bool     // Install all discovered skills without prompting
 	Yes              bool     // Auto-accept all prompts (equivalent to --all for multi-skill repos)
@@ -26,7 +28,14 @@ type InstallOptions struct {
 	AuditProjectRoot string   // Project root for project-mode audit rule resolution
 	Quiet            bool     // Suppress per-skill output in InstallFromConfig
 	Branch           string   // Git branch to clone from (empty = remote default)
+	SourceDir        string   // Skills root dir for centralized metadata (set by caller)
 }
+
+// IsAgentMode returns true if explicitly installing agents.
+func (o InstallOptions) IsAgentMode() bool { return o.Kind == "agent" }
+
+// HasAgentFilter returns true if specific agents were requested via -a flag.
+func (o InstallOptions) HasAgentFilter() bool { return len(o.AgentNames) > 0 }
 
 // ShouldInstallAll returns true if all discovered skills should be installed without prompting.
 func (o InstallOptions) ShouldInstallAll() bool { return o.All || o.Yes }
@@ -55,13 +64,36 @@ type SkillInfo struct {
 	Description string // Description from SKILL.md frontmatter (if any)
 }
 
-// DiscoveryResult contains discovered skills from a repository
+// AgentInfo represents a discovered agent (.md file) in a repository
+type AgentInfo struct {
+	Name     string // Agent name (filename without .md)
+	Path     string // Relative path from repo root (e.g. "agents/tutor.md")
+	FileName string // Filename (e.g. "tutor.md")
+}
+
+// DiscoveryResult contains discovered skills and agents from a repository
 type DiscoveryResult struct {
 	RepoPath   string      // Temp directory where repo was cloned
 	Skills     []SkillInfo // Discovered skills
+	Agents     []AgentInfo // Discovered agents
 	Source     *Source     // Original source
 	CommitHash string      // Source commit hash when available
 	Warnings   []string    // Non-fatal warnings during discovery
+}
+
+// HasAgents reports whether the discovery found any agents.
+func (d *DiscoveryResult) HasAgents() bool {
+	return len(d.Agents) > 0
+}
+
+// HasSkills reports whether the discovery found any skills.
+func (d *DiscoveryResult) HasSkills() bool {
+	return len(d.Skills) > 0
+}
+
+// IsMixed reports whether the discovery found both skills and agents.
+func (d *DiscoveryResult) IsMixed() bool {
+	return d.HasSkills() && d.HasAgents()
 }
 
 // TrackedRepoResult reports the outcome of a tracked repo installation
@@ -70,6 +102,8 @@ type TrackedRepoResult struct {
 	RepoPath       string   // Full path to the repo
 	SkillCount     int      // Number of skills discovered
 	Skills         []string // Names of discovered skills
+	AgentCount     int      // Number of agents discovered
+	Agents         []string // Names of discovered agents
 	Action         string   // "cloned", "updated", "skipped"
 	Warnings       []string
 	AuditThreshold string
@@ -185,6 +219,47 @@ func DiscoverFromGitSubdir(source *Source) (*DiscoveryResult, error) {
 // the source subdir while optionally streaming git progress output.
 func DiscoverFromGitSubdirWithProgress(source *Source, onProgress ProgressCallback) (*DiscoveryResult, error) {
 	return discoverFromGitSubdirWithProgressImpl(source, onProgress)
+}
+
+// InferTrackedKind determines which resource kind a tracked install should use.
+// Pure-agent repositories resolve to "agent". Mixed repositories must specify
+// the kind explicitly to avoid ambiguous install roots.
+func InferTrackedKind(source *Source, explicitKind string) (string, error) {
+	if !source.IsGit() {
+		return "", fmt.Errorf("--track requires a git repository source")
+	}
+
+	if explicitKind == "skill" || explicitKind == "agent" {
+		return explicitKind, nil
+	}
+
+	var (
+		discovery *DiscoveryResult
+		err       error
+	)
+	if source.HasSubdir() {
+		discovery, err = DiscoverFromGitSubdir(source)
+	} else {
+		discovery, err = DiscoverFromGit(source)
+	}
+	if err != nil {
+		return "", err
+	}
+	defer CleanupDiscovery(discovery)
+
+	switch {
+	case discovery.HasSkills() && discovery.HasAgents():
+		return "", fmt.Errorf("tracked install is ambiguous for mixed repositories; pass --kind skill or --kind agent")
+	case discovery.HasAgents() && !discovery.HasSkills():
+		return "agent", nil
+	default:
+		return "skill", nil
+	}
+}
+
+// DiscoverLocal inspects a local directory and discovers skills and agents.
+func DiscoverLocal(source *Source) (*DiscoveryResult, error) {
+	return discoverLocalImpl(source)
 }
 
 // CleanupDiscovery removes temporary resources created by discovery.

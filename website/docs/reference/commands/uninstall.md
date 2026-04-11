@@ -288,9 +288,22 @@ skillshare sync
 git add .skillshare/ && git commit -m "Remove pdf skill"
 ```
 
+## Agent Support
+
+Use `--kind agent` to uninstall agents instead of skills:
+
+```bash
+skillshare uninstall --kind agent tutor              # Remove an agent
+skillshare uninstall --kind agent tutor reviewer -f   # Remove multiple agents
+skillshare uninstall --kind agent --all               # Remove all agents
+```
+
+Agent uninstall follows the same trash-and-retain behavior as skills (moved to trash, kept 7 days). See [Agents](/docs/understand/agents) for background.
+
 ## See Also
 
 - [install](/docs/reference/commands/install) — Install skills
 - [list](/docs/reference/commands/list) — List installed skills
 - [trash](/docs/reference/commands/trash) — Manage trashed skills
 - [Project Skills](/docs/understand/project-skills) — Project mode concepts
+- [Agents](/docs/understand/agents) — Agent concepts

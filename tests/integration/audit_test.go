@@ -13,6 +13,7 @@ import (
 	"strings"
 	"testing"
 
+	"skillshare/internal/install"
 	"skillshare/internal/testutil"
 )
 
@@ -875,19 +876,40 @@ func sha256Hex(data []byte) string {
 	return hex.EncodeToString(h[:])
 }
 
-// writeMetaJSON writes a .skillshare-meta.json with the given file_hashes into dir.
-func writeMetaJSON(t *testing.T, dir string, hashes map[string]string) {
+// writeMetaJSON writes file_hashes for a skill into the centralized .metadata.json
+// store in the parent directory of skillDir.
+func writeMetaJSON(t *testing.T, skillDir string, hashes map[string]string) {
 	t.Helper()
-	meta := map[string]any{
+	skillName := filepath.Base(skillDir)
+	parentDir := filepath.Dir(skillDir)
+
+	entry := map[string]any{
 		"source":       "test",
 		"type":         "local",
 		"installed_at": "2026-01-01T00:00:00Z",
 	}
 	if hashes != nil {
-		meta["file_hashes"] = hashes
+		entry["file_hashes"] = hashes
 	}
-	data, _ := json.Marshal(meta)
-	if err := os.WriteFile(filepath.Join(dir, ".skillshare-meta.json"), data, 0644); err != nil {
+	store := map[string]any{
+		"version": 1,
+		"entries": map[string]any{skillName: entry},
+	}
+
+	// Merge with existing store if present
+	existingData, err := os.ReadFile(filepath.Join(parentDir, install.MetadataFileName))
+	if err == nil {
+		var existing map[string]any
+		if json.Unmarshal(existingData, &existing) == nil {
+			if entries, ok := existing["entries"].(map[string]any); ok {
+				entries[skillName] = entry
+				store = existing
+			}
+		}
+	}
+
+	data, _ := json.Marshal(store)
+	if err := os.WriteFile(filepath.Join(parentDir, install.MetadataFileName), data, 0644); err != nil {
 		t.Fatalf("writeMetaJSON: %v", err)
 	}
 }
@@ -1535,4 +1557,41 @@ func TestAudit_ProfileInConfig(t *testing.T) {
 	if payload.Summary.PolicyDedupe != "global" {
 		t.Fatalf("expected policyDedupe=global from strict profile default, got %s", payload.Summary.PolicyDedupe)
 	}
+}
+
+func TestAudit_AgentsTerminology(t *testing.T) {
+	sb := testutil.NewSandbox(t)
+	defer sb.Cleanup()
+
+	// Create an agent in the agents source directory.
+	agentsDir := filepath.Join(sb.Home, ".config", "skillshare", "agents")
+	agentDir := filepath.Join(agentsDir, "test-agent")
+	os.MkdirAll(agentDir, 0o755)
+	os.WriteFile(filepath.Join(agentDir, "agent.md"), []byte("# Test Agent\nA safe agent."), 0o644)
+
+	sb.WriteConfig("source: " + sb.SourcePath + "\nagents_source: " + agentsDir + "\ntargets: {}\n")
+
+	result := sb.RunCLI("audit", "agents", "--no-tui")
+	result.AssertSuccess(t)
+	// Output should use "agent" terminology, not "skill"
+	result.AssertAnyOutputContains(t, "agent")
+	result.AssertOutputNotContains(t, "skill(s)")
+	result.AssertOutputNotContains(t, "Scanned:   1 skill")
+}
+
+func TestAudit_SkillsTerminology(t *testing.T) {
+	sb := testutil.NewSandbox(t)
+	defer sb.Cleanup()
+
+	sb.CreateSkill("my-skill", map[string]string{
+		"SKILL.md": "---\nname: my-skill\n---\n# Safe skill",
+	})
+	sb.WriteConfig("source: " + sb.SourcePath + "\ntargets: {}\n")
+
+	result := sb.RunCLI("audit", "--no-tui")
+	result.AssertSuccess(t)
+	// Default audit should use "skill" terminology
+	result.AssertAnyOutputContains(t, "skill")
+	result.AssertOutputNotContains(t, "agent(s)")
+	result.AssertOutputNotContains(t, "Scanned:   1 agent")
 }

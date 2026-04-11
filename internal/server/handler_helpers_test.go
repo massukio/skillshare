@@ -3,9 +3,11 @@ package server
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"skillshare/internal/config"
+	"skillshare/internal/install"
 )
 
 // newTestServer creates an isolated Server for handler testing.
@@ -15,10 +17,15 @@ func newTestServer(t *testing.T) (*Server, string) {
 	t.Helper()
 	tmp := t.TempDir()
 	sourceDir := filepath.Join(tmp, "skills")
+	homeDir := filepath.Join(tmp, "home")
 	os.MkdirAll(sourceDir, 0755)
 	t.Setenv("XDG_DATA_HOME", filepath.Join(tmp, "data"))
 	t.Setenv("XDG_STATE_HOME", filepath.Join(tmp, "state"))
 	t.Setenv("XDG_CONFIG_HOME", filepath.Join(tmp, "xdg-config"))
+	if os.Getenv("HOME") == "" {
+		os.MkdirAll(homeDir, 0755)
+		t.Setenv("HOME", homeDir)
+	}
 
 	cfgPath := filepath.Join(tmp, "config", "config.yaml")
 	t.Setenv("SKILLSHARE_CONFIG", cfgPath)
@@ -41,10 +48,15 @@ func newTestServerWithTargets(t *testing.T, targets map[string]string) (*Server,
 	t.Helper()
 	tmp := t.TempDir()
 	sourceDir := filepath.Join(tmp, "skills")
+	homeDir := filepath.Join(tmp, "home")
 	os.MkdirAll(sourceDir, 0755)
 	t.Setenv("XDG_DATA_HOME", filepath.Join(tmp, "data"))
 	t.Setenv("XDG_STATE_HOME", filepath.Join(tmp, "state"))
 	t.Setenv("XDG_CONFIG_HOME", filepath.Join(tmp, "xdg-config"))
+	if os.Getenv("HOME") == "" {
+		os.MkdirAll(homeDir, 0755)
+		t.Setenv("HOME", homeDir)
+	}
 
 	cfgPath := filepath.Join(tmp, "config", "config.yaml")
 	t.Setenv("SKILLSHARE_CONFIG", cfgPath)
@@ -85,9 +97,37 @@ func addTrackedRepo(t *testing.T, sourceDir, relPath string) {
 	}
 }
 
-// addSkillMeta creates a .skillshare-meta.json for a skill (marks it as remotely installed).
+// addSkillMeta writes a metadata entry into the centralized .metadata.json store.
 func addSkillMeta(t *testing.T, sourceDir, name, source string) {
 	t.Helper()
-	meta := `{"source":"` + source + `"}`
-	os.WriteFile(filepath.Join(sourceDir, name, ".skillshare-meta.json"), []byte(meta), 0644)
+	store := install.LoadMetadataOrNew(sourceDir)
+	store.Set(name, &install.MetadataEntry{Source: source})
+	if err := store.Save(sourceDir); err != nil {
+		t.Fatalf("addSkillMeta: %v", err)
+	}
+}
+
+func addAgent(t *testing.T, agentsDir, relPath string) {
+	t.Helper()
+	agentPath := filepath.Join(agentsDir, filepath.FromSlash(relPath))
+	if err := os.MkdirAll(filepath.Dir(agentPath), 0o755); err != nil {
+		t.Fatalf("create agent dir: %v", err)
+	}
+	if err := os.WriteFile(agentPath, []byte("---\nname: "+strings.TrimSuffix(filepath.Base(relPath), ".md")+"\n---\n# agent"), 0o644); err != nil {
+		t.Fatalf("write agent: %v", err)
+	}
+}
+
+func addAgentMeta(t *testing.T, agentsDir, relPath, source string) {
+	t.Helper()
+	store := install.LoadMetadataOrNew(agentsDir)
+	key := strings.TrimSuffix(filepath.ToSlash(relPath), ".md")
+	store.Set(key, &install.MetadataEntry{
+		Source: source,
+		Kind:   install.MetadataKindAgent,
+		Subdir: filepath.ToSlash(relPath),
+	})
+	if err := store.Save(agentsDir); err != nil {
+		t.Fatalf("addAgentMeta: %v", err)
+	}
 }

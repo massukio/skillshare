@@ -46,8 +46,9 @@ func TestInstall_LocalPath_Basic(t *testing.T) {
 		t.Error("expected SKILL.md to exist in destination")
 	}
 
-	// Verify metadata was written
-	if !HasMeta(destDir) {
+	// Verify metadata was written to centralized store
+	store, _ := LoadMetadata(filepath.Dir(destDir))
+	if !store.Has(filepath.Base(destDir)) {
 		t.Error("expected metadata to be written")
 	}
 }
@@ -162,17 +163,15 @@ func TestInstall_LocalPath_WritesFileHashes(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	meta, err := ReadMeta(destDir)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if meta == nil {
+	store, _ := LoadMetadata(filepath.Dir(destDir))
+	entry := store.Get(filepath.Base(destDir))
+	if entry == nil {
 		t.Fatal("expected meta to exist")
 	}
-	if len(meta.FileHashes) < 2 {
-		t.Errorf("expected at least 2 file hashes (SKILL.md + helpers.sh), got %d", len(meta.FileHashes))
+	if len(entry.FileHashes) < 2 {
+		t.Errorf("expected at least 2 file hashes (SKILL.md + helpers.sh), got %d", len(entry.FileHashes))
 	}
-	for _, hash := range meta.FileHashes {
+	for _, hash := range entry.FileHashes {
 		if len(hash) < 7 || hash[:7] != "sha256:" {
 			t.Errorf("expected sha256: prefixed hash, got %q", hash)
 		}
@@ -233,6 +232,52 @@ func TestInstall_LocalPath_WithAudit(t *testing.T) {
 	}
 	if result.AuditThreshold == "" {
 		t.Error("expected audit threshold to be set")
+	}
+}
+
+func TestInstallAgentFromDiscovery_HighFindingBlocked(t *testing.T) {
+	tmp := t.TempDir()
+	repoDir := filepath.Join(tmp, "repo")
+	if err := os.MkdirAll(repoDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(repoDir, "reviewer.md"), []byte("# Reviewer\nsudo apt-get install -y jq\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	discovery := &DiscoveryResult{
+		RepoPath: repoDir,
+		Source: &Source{
+			Type: SourceTypeLocalPath,
+			Raw:  repoDir,
+			Path: repoDir,
+		},
+	}
+
+	destRoot := filepath.Join(tmp, "agents")
+	_, err := InstallAgentFromDiscovery(discovery, AgentInfo{
+		Name:     "reviewer",
+		Path:     "reviewer.md",
+		FileName: "reviewer.md",
+	}, destRoot, InstallOptions{
+		SourceDir:      destRoot,
+		AuditThreshold: audit.SeverityHigh,
+	})
+	if err == nil {
+		t.Fatal("expected audit block for agent install")
+	}
+	if !errors.Is(err, audit.ErrBlocked) {
+		t.Fatalf("expected error to wrap audit.ErrBlocked, got: %v", err)
+	}
+	if _, statErr := os.Stat(filepath.Join(destRoot, "reviewer.md")); !os.IsNotExist(statErr) {
+		t.Fatalf("expected blocked agent file to be removed, stat err=%v", statErr)
+	}
+
+	store, loadErr := LoadMetadata(destRoot)
+	if loadErr == nil {
+		if entry := store.Get("reviewer"); entry != nil {
+			t.Fatalf("expected no metadata for blocked agent install, got %+v", entry)
+		}
 	}
 }
 
@@ -450,5 +495,109 @@ func TestCheckSkillFile_Missing(t *testing.T) {
 	checkSkillFile(dir, result)
 	if len(result.Warnings) != 1 {
 		t.Errorf("expected 1 warning for missing SKILL.md, got %d", len(result.Warnings))
+	}
+}
+
+// TestInstallFromDiscovery_Orchestrator_RootExcludesChildren verifies issue
+// #124: installing a root skill of an orchestrator repo must not drag child
+// skill directories into the root install. Each child must install to its own
+// directory as an independent skill.
+func TestInstallFromDiscovery_Orchestrator_RootExcludesChildren(t *testing.T) {
+	tmp := t.TempDir()
+	repoDir := filepath.Join(tmp, "orchestrator")
+	os.MkdirAll(repoDir, 0755)
+
+	// Layout:
+	//   SKILL.md                  (root skill)
+	//   README.md
+	//   src/helper.go             (root-owned asset)
+	//   skills/child-a/SKILL.md   (child skill)
+	//   skills/child-b/SKILL.md   (child skill)
+	os.WriteFile(filepath.Join(repoDir, "SKILL.md"),
+		[]byte("---\nname: orchestrator\n---\n# Root"), 0644)
+	os.WriteFile(filepath.Join(repoDir, "README.md"), []byte("readme"), 0644)
+	os.MkdirAll(filepath.Join(repoDir, "src"), 0755)
+	os.WriteFile(filepath.Join(repoDir, "src", "helper.go"), []byte("package main"), 0644)
+	os.MkdirAll(filepath.Join(repoDir, "skills", "child-a"), 0755)
+	os.WriteFile(filepath.Join(repoDir, "skills", "child-a", "SKILL.md"),
+		[]byte("---\nname: child-a\n---\n# A"), 0644)
+	os.MkdirAll(filepath.Join(repoDir, "skills", "child-b"), 0755)
+	os.WriteFile(filepath.Join(repoDir, "skills", "child-b", "SKILL.md"),
+		[]byte("---\nname: child-b\n---\n# B"), 0644)
+
+	source := &Source{
+		Type: SourceTypeLocalPath,
+		Raw:  repoDir,
+		Path: repoDir,
+		Name: "orchestrator",
+	}
+
+	discovery, err := DiscoverLocal(source)
+	if err != nil {
+		t.Fatalf("DiscoverLocal failed: %v", err)
+	}
+	if len(discovery.Skills) != 3 {
+		t.Fatalf("expected 3 discovered skills (root + 2 children), got %d: %+v",
+			len(discovery.Skills), discovery.Skills)
+	}
+
+	// Locate root and children in the discovery result.
+	var root *SkillInfo
+	var children []SkillInfo
+	for i := range discovery.Skills {
+		if discovery.Skills[i].Path == "." {
+			root = &discovery.Skills[i]
+		} else {
+			children = append(children, discovery.Skills[i])
+		}
+	}
+	if root == nil {
+		t.Fatal("expected root skill with Path=\".\"")
+	}
+	if len(children) != 2 {
+		t.Fatalf("expected 2 children, got %d", len(children))
+	}
+
+	// Install the root skill first.
+	rootDest := filepath.Join(tmp, "dest", "orchestrator")
+	if _, err := InstallFromDiscovery(discovery, *root, rootDest,
+		InstallOptions{SourceDir: filepath.Join(tmp, "dest"), SkipAudit: true}); err != nil {
+		t.Fatalf("root install failed: %v", err)
+	}
+
+	// Root dest MUST contain its own files and non-skill subdirs.
+	for _, rel := range []string{
+		"SKILL.md",
+		"README.md",
+		filepath.Join("src", "helper.go"),
+	} {
+		if _, err := os.Stat(filepath.Join(rootDest, rel)); err != nil {
+			t.Errorf("expected %q in root install, got %v", rel, err)
+		}
+	}
+
+	// Root dest MUST NOT contain child skill directories or their SKILL.md.
+	for _, rel := range []string{
+		filepath.Join("skills", "child-a"),
+		filepath.Join("skills", "child-b"),
+		filepath.Join("skills", "child-a", "SKILL.md"),
+		filepath.Join("skills", "child-b", "SKILL.md"),
+	} {
+		if _, err := os.Stat(filepath.Join(rootDest, rel)); !os.IsNotExist(err) {
+			t.Errorf("expected %q to be excluded from root install, but it exists (err=%v)",
+				rel, err)
+		}
+	}
+
+	// Install each child as an independent skill under the root dir.
+	for _, child := range children {
+		childDest := filepath.Join(rootDest, child.Name)
+		if _, err := InstallFromDiscovery(discovery, child, childDest,
+			InstallOptions{SourceDir: filepath.Join(tmp, "dest"), SkipAudit: true}); err != nil {
+			t.Fatalf("child %q install failed: %v", child.Name, err)
+		}
+		if _, err := os.Stat(filepath.Join(childDest, "SKILL.md")); err != nil {
+			t.Errorf("expected child %q SKILL.md at %q, got %v", child.Name, childDest, err)
+		}
 	}
 }

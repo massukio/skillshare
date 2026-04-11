@@ -7,7 +7,6 @@ import (
 	"path/filepath"
 	"strings"
 
-	"skillshare/internal/config"
 	"skillshare/internal/install"
 	"skillshare/internal/sync"
 	"skillshare/internal/trash"
@@ -88,6 +87,12 @@ func cmdUninstallProject(args []string, root string) error {
 
 	sourceDir := filepath.Join(root, ".skillshare", "skills")
 	trashDir := trash.ProjectTrashDir(root)
+
+	// Load centralized metadata store for display/reinstall hints.
+	skillsStore, _ := install.LoadMetadataWithMigration(sourceDir, "")
+	if skillsStore == nil {
+		skillsStore = install.NewMetadataStore()
+	}
 
 	// Backward compat: ensure operational dirs are gitignored for projects created before v0.17.3.
 	_ = ensureProjectGitignore(root, false)
@@ -172,7 +177,7 @@ func cmdUninstallProject(args []string, root string) error {
 	single := len(targets) == 1
 	summary := summarizeUninstallTargets(targets)
 	if single {
-		displayUninstallInfo(targets[0])
+		displayUninstallInfo(targets[0], skillsStore)
 	} else {
 		ui.Header(fmt.Sprintf("Uninstalling %d %s", len(targets), summary.noun()))
 		if len(targets) > 20 {
@@ -239,8 +244,8 @@ func cmdUninstallProject(args []string, root string) error {
 		for _, t := range targets {
 			ui.Warning("[dry-run] would move to trash: %s", t.path)
 			ui.Warning("[dry-run] would update .skillshare/.gitignore")
-			if meta, err := install.ReadMeta(t.path); err == nil && meta != nil && meta.Source != "" {
-				ui.Info("[dry-run] Reinstall: skillshare install %s --project", meta.Source)
+			if entry := skillsStore.Get(t.name); entry != nil && entry.Source != "" {
+				ui.Info("[dry-run] Reinstall: skillshare install %s --project", entry.Source)
 			}
 		}
 		return nil
@@ -369,7 +374,7 @@ func cmdUninstallProject(args []string, root string) error {
 		}
 	} else {
 		for _, t := range targets {
-			meta, _ := install.ReadMeta(t.path)
+			entry := skillsStore.Get(t.name)
 			groupSkillCount := 0
 			if !t.isTrackedRepo {
 				groupSkillCount = len(countGroupSkills(t.path))
@@ -390,8 +395,8 @@ func cmdUninstallProject(args []string, root string) error {
 				ui.Success("Uninstalled skill: %s", t.name)
 			}
 			ui.Info("Moved to trash (7 days): %s", trashPath)
-			if meta != nil && meta.Source != "" {
-				ui.Info("Reinstall: skillshare install %s --project", meta.Source)
+			if entry != nil && entry.Source != "" {
+				ui.Info("Reinstall: skillshare install %s --project", entry.Source)
 			}
 			succeeded = append(succeeded, t)
 		}
@@ -409,41 +414,15 @@ func cmdUninstallProject(args []string, root string) error {
 	}
 
 	// --- Phase 7: FINALIZE ---
+	// Batch-remove succeeded skills from metadata store
 	if len(succeeded) > 0 {
-		regDir := filepath.Join(root, ".skillshare")
-		reg, regErr := config.LoadRegistry(regDir)
-		if regErr != nil {
-			ui.Warning("Failed to load registry: %v", regErr)
-		} else if len(reg.Skills) > 0 {
-			removedNames := map[string]bool{}
-			for _, t := range succeeded {
-				removedNames[t.name] = true
-			}
-			updated := make([]config.SkillEntry, 0, len(reg.Skills))
-			for _, s := range reg.Skills {
-				fullName := s.FullName()
-				if removedNames[fullName] {
-					continue
-				}
-				// When a group directory is uninstalled, also remove its member skills
-				memberOfRemoved := false
-				for name := range removedNames {
-					if strings.HasPrefix(fullName, name+"/") {
-						memberOfRemoved = true
-						break
-					}
-				}
-				if memberOfRemoved {
-					continue
-				}
-				updated = append(updated, s)
-			}
-			if len(updated) != len(reg.Skills) {
-				reg.Skills = updated
-				if saveErr := reg.Save(regDir); saveErr != nil {
-					ui.Warning("Failed to update registry after uninstall: %v", saveErr)
-				}
-			}
+		removedNames := map[string]bool{}
+		for _, t := range succeeded {
+			removedNames[t.name] = true
+		}
+		skillsStore.RemoveByNames(removedNames)
+		if saveErr := skillsStore.Save(sourceDir); saveErr != nil {
+			ui.Warning("Failed to update metadata after uninstall: %v", saveErr)
 		}
 	}
 

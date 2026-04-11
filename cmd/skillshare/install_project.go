@@ -10,17 +10,21 @@ import (
 )
 
 func cmdInstallProject(args []string, root string) (installLogSummary, error) {
-	summary := installLogSummary{
-		Mode: "project",
-	}
-
 	parsed, showHelp, err := parseInstallArgs(args)
 	if showHelp {
 		printInstallHelp()
-		return summary, nil
+		return installLogSummary{Mode: "project"}, nil
 	}
 	if err != nil {
-		return summary, err
+		return installLogSummary{Mode: "project"}, err
+	}
+	applyInstallJSONDefaults(parsed)
+	return cmdInstallProjectParsed(parsed, root)
+}
+
+func cmdInstallProjectParsed(parsed *installArgs, root string) (installLogSummary, error) {
+	summary := installLogSummary{
+		Mode: "project",
 	}
 	summary.DryRun = parsed.opts.DryRun
 	summary.Tracked = parsed.opts.Track
@@ -46,17 +50,17 @@ func cmdInstallProject(args []string, root string) (installLogSummary, error) {
 
 	if parsed.sourceArg == "" {
 		hasSourceFlags := parsed.opts.Name != "" || parsed.opts.Into != "" ||
-			parsed.opts.Track || len(parsed.opts.Skills) > 0 ||
-			len(parsed.opts.Exclude) > 0 || parsed.opts.All || parsed.opts.Yes || parsed.opts.Update ||
-			parsed.opts.Branch != ""
-		if hasSourceFlags {
-			return summary, fmt.Errorf("flags --name, --into, --track, --skill, --exclude, --all, --yes, and --update require a source argument")
+			parsed.opts.Track || parsed.opts.HasSkillFilter() || parsed.opts.HasAgentFilter() ||
+			len(parsed.opts.Exclude) > 0 || parsed.opts.Update || parsed.opts.Branch != "" ||
+			parsed.opts.Kind != ""
+		if hasSourceFlags || ((parsed.opts.All || parsed.opts.Yes) && !parsed.jsonOutput) {
+			return summary, fmt.Errorf("flags --name, --into, --track, --skill, --agent, --kind, --exclude, --all, --yes, --branch, and --update require a source argument")
 		}
 		summary.Source = "project-config"
 		return installFromProjectConfig(runtime, parsed.opts)
 	}
 
-	cfg := &config.Config{Source: runtime.sourcePath, GitLabHosts: runtime.config.GitLabHosts}
+	cfg := &config.Config{Source: runtime.sourcePath, AgentsSource: runtime.agentsSourcePath, GitLabHosts: runtime.config.GitLabHosts}
 	source, resolvedFromMeta, err := resolveInstallSource(parsed.sourceArg, parsed.opts, cfg)
 	if err == nil && parsed.opts.Branch != "" {
 		source.Branch = parsed.opts.Branch
@@ -72,6 +76,10 @@ func cmdInstallProject(args []string, root string) (installLogSummary, error) {
 			return summary, err
 		}
 		if !parsed.opts.DryRun {
+			freshStore, loadErr := install.LoadMetadata(runtime.sourcePath)
+			if loadErr == nil {
+				runtime.skillsStore = freshStore
+			}
 			return summary, reconcileProjectRemoteSkills(runtime)
 		}
 		return summary, nil
@@ -85,6 +93,13 @@ func cmdInstallProject(args []string, root string) (installLogSummary, error) {
 
 	if parsed.opts.DryRun {
 		return summary, nil
+	}
+
+	// Reload metadata store: install may have written new entries via WriteMeta
+	// that the pre-install runtime doesn't know about.
+	freshStore, loadErr := install.LoadMetadata(runtime.sourcePath)
+	if loadErr == nil {
+		runtime.skillsStore = freshStore
 	}
 
 	return summary, reconcileProjectRemoteSkills(runtime)

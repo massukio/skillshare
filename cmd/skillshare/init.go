@@ -377,8 +377,12 @@ func performFreshInit(opts *initOptions, home string) error {
 		ui.Warning("Dry run mode - no changes will be made")
 	}
 
-	// Create source directory if needed
+	// Create source directories if needed
 	if err := createSourceDir(sourcePath, opts.dryRun); err != nil {
+		return err
+	}
+	agentsSourcePath := filepath.Join(filepath.Dir(sourcePath), "agents")
+	if err := createSourceDir(agentsSourcePath, opts.dryRun); err != nil {
 		return err
 	}
 

@@ -4,36 +4,45 @@ sidebar_position: 1
 
 # collect
 
-Collect local skills from targets back to source.
+Collect local skills or agents from targets back to source.
 
 ```bash
 skillshare collect claude           # From specific target
 skillshare collect --all            # From all targets
 skillshare collect claude --dry-run # Preview
+skillshare collect agents claude    # Collect agents instead of skills
 ```
 
 ## When to Use
 
-Use `collect` when you've created or edited skills directly in a target directory (e.g., `~/.claude/skills/`) and want to:
+Use `collect` when you've created or edited resources directly in a target directory and want to pull them back into the source of truth:
 
 1. Add them to your source for sharing
 2. Sync them to other AI CLIs
 3. Back them up with git
+
+Examples:
+
+- Skills: `~/.claude/skills/my-skill/`
+- Agents: `~/.claude/agents/tutor.md`
 
 ## What Happens
 
 ```mermaid
 flowchart TD
     CMD["skillshare collect claude"]
-    FIND["1. Find local skills in target"]
+    FIND["1. Find local items in target"]
     CONFIRM["2. Confirm collection"]
     COPY["3. Copy to source"]
-    SYMLINK["4. Replace with symlink"]
-    CMD --> FIND --> CONFIRM --> COPY --> SYMLINK
+    CMD --> FIND --> CONFIRM --> COPY
 ```
 
 :::tip
 `.git/` directories are automatically excluded during collection. If you've git-cloned a skill repo directly into a target directory, only the skill content is copied — repository metadata stays behind.
+:::
+
+:::note
+The web dashboard's **Collect** page is currently skills-only. Use the CLI for `collect agents`.
 :::
 
 ## Options
@@ -41,7 +50,7 @@ flowchart TD
 | Flag | Description |
 |------|-------------|
 | `--all, -a` | Collect from all targets |
-| `--force, -f` | Overwrite existing skills in source |
+| `--force, -f` | Overwrite existing items in source and skip confirmation |
 | `--dry-run, -n` | Preview without making changes |
 | `--json` | Output as JSON (implies `--force`, skips confirmation) |
 
@@ -65,6 +74,8 @@ Combine with `--dry-run` to preview without changes:
 
 ```bash
 skillshare collect claude --json --dry-run
+skillshare collect -p --json
+skillshare collect -p agents --json
 ```
 
 ## Example Output
@@ -87,7 +98,7 @@ Run 'skillshare sync' to distribute to all targets
 
 ## Handling Conflicts
 
-If a skill already exists in source:
+If an item already exists in source, collection skips it by default:
 
 ```bash
 $ skillshare collect claude
@@ -97,6 +108,11 @@ Collecting skills
 
 # To overwrite:
 $ skillshare collect claude --force
+
+$ skillshare collect agents claude
+
+Collecting agents
+  ⚠ tutor.md: skipped (already exists in source, use --force to overwrite)
 ```
 
 ## Workflow
@@ -115,6 +131,13 @@ skillshare sync
 
 # 4. Commit to git (optional)
 skillshare push -m "Add my-new-skill"
+```
+
+For agents, use the agent-specific collect/sync pair:
+
+```bash
+skillshare collect agents claude
+skillshare sync agents
 ```
 
 ## See Also

@@ -2,7 +2,7 @@ import { NavLink, Outlet, useNavigate, useLocation } from 'react-router-dom';
 import { useState, useCallback, useEffect } from 'react';
 import {
   LayoutDashboard,
-  Puzzle,
+  Layers,
   Target,
   FolderPlus,
   RefreshCw,
@@ -55,7 +55,7 @@ const navGroups: NavGroup[] = [
   {
     label: 'MANAGE',
     items: [
-      { to: '/skills', icon: Puzzle, label: 'Skills' },
+      { to: '/resources', icon: Layers, label: 'Resources' },
       { to: '/extras', icon: FolderPlus, label: 'Extras' },
       { to: '/targets', icon: Target, label: 'Targets' },
       { to: '/search', icon: Search, label: 'Search' },

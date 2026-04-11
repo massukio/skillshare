@@ -5,7 +5,7 @@ import { yaml } from '@codemirror/lang-yaml';
 import { EditorView, keymap } from '@codemirror/view';
 import { linter, lintGutter } from '@codemirror/lint';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import type { SkillignoreResponse } from '../api/client';
+import type { SkillignoreResponse, AgentignoreResponse } from '../api/client';
 import type { ValidationError } from '../hooks/useYamlValidation';
 import { useYamlValidation } from '../hooks/useYamlValidation';
 import { useLineDiff, computeSimpleChangeCount } from '../hooks/useLineDiff';
@@ -25,7 +25,7 @@ import { useAppContext } from '../context/AppContext';
 import { handTheme } from '../lib/codemirror-theme';
 import SyncPreviewModal from '../components/SyncPreviewModal';
 
-type ConfigTab = 'config' | 'skillignore';
+type ConfigTab = 'config' | 'skillignore' | 'agentignore';
 
 export default function ConfigPage() {
   const queryClient = useQueryClient();
@@ -186,10 +186,57 @@ export default function ConfigPage() {
     }
   };
 
+  // --- .agentignore state ---
+  const { data: agentIgnoreData, isPending: agentIgnorePending, error: agentIgnoreError } = useQuery({
+    queryKey: queryKeys.agentignore,
+    queryFn: () => api.getAgentignore(),
+    staleTime: staleTimes.agentignore,
+    enabled: tab === 'agentignore',
+  });
+  const [agentIgnoreRaw, setAgentIgnoreRaw] = useState('');
+  const [agentIgnoreDirty, setAgentIgnoreDirty] = useState(false);
+  const [agentIgnoreSaving, setAgentIgnoreSaving] = useState(false);
+
+  const agentIgnoreChangeCount = useMemo(
+    () => computeSimpleChangeCount(agentIgnoreData?.raw ?? '', agentIgnoreRaw),
+    [agentIgnoreRaw, agentIgnoreData],
+  );
+
+  useEffect(() => {
+    if (agentIgnoreData) {
+      setAgentIgnoreRaw(agentIgnoreData.raw ?? '');
+      setAgentIgnoreDirty(false);
+    }
+  }, [agentIgnoreData]);
+
+  const handleAgentIgnoreChange = (value: string) => {
+    setAgentIgnoreRaw(value);
+    const changed = value !== (agentIgnoreData?.raw ?? '');
+    setAgentIgnoreDirty(changed);
+    if (changed) setShowSyncBanner(false);
+  };
+
+  const handleAgentIgnoreSave = async () => {
+    setAgentIgnoreSaving(true);
+    try {
+      await api.putAgentignore(agentIgnoreRaw);
+      toast('.agentignore saved successfully.', 'success');
+      setAgentIgnoreDirty(false);
+      queryClient.invalidateQueries({ queryKey: queryKeys.agentignore });
+      queryClient.invalidateQueries({ queryKey: queryKeys.overview });
+      queryClient.invalidateQueries({ queryKey: queryKeys.skills.all });
+      queryClient.invalidateQueries({ queryKey: queryKeys.doctor });
+    } catch (e: unknown) {
+      toast((e as Error).message, 'error');
+    } finally {
+      setAgentIgnoreSaving(false);
+    }
+  };
+
   // --- active tab dirty/saving state ---
-  const activeDirty = tab === 'config' ? dirty : ignoreDirty;
-  const activeSaving = tab === 'config' ? saving : ignoreSaving;
-  const handleSave = tab === 'config' ? handleConfigSave : handleIgnoreSave;
+  const activeDirty = tab === 'config' ? dirty : tab === 'skillignore' ? ignoreDirty : agentIgnoreDirty;
+  const activeSaving = tab === 'config' ? saving : tab === 'skillignore' ? ignoreSaving : agentIgnoreSaving;
+  const handleSave = tab === 'config' ? handleConfigSave : tab === 'skillignore' ? handleIgnoreSave : handleAgentIgnoreSave;
   saveRef.current = handleSave;
 
   // --- panel toggle + Cmd+B ---
@@ -226,7 +273,8 @@ export default function ConfigPage() {
   const handleDiscard = () => {
     if (pendingTab) {
       if (tab === 'config') { setRaw(configData?.raw ?? ''); setDirty(false); }
-      else { setIgnoreRaw(ignoreData?.raw ?? ''); setIgnoreDirty(false); }
+      else if (tab === 'skillignore') { setIgnoreRaw(ignoreData?.raw ?? ''); setIgnoreDirty(false); }
+      else { setAgentIgnoreRaw(agentIgnoreData?.raw ?? ''); setAgentIgnoreDirty(false); }
       setTab(pendingTab);
     }
     setShowDiscardDialog(false);
@@ -240,15 +288,15 @@ export default function ConfigPage() {
   };
 
   // --- loading / error for active tab ---
-  const isPending = tab === 'config' ? configPending : ignorePending;
-  const error = tab === 'config' ? configError : ignoreError;
+  const isPending = tab === 'config' ? configPending : tab === 'skillignore' ? ignorePending : agentIgnorePending;
+  const error = tab === 'config' ? configError : tab === 'skillignore' ? ignoreError : agentIgnoreError;
 
   if (isPending) return <PageSkeleton />;
   if (error) {
     return (
       <Card variant="accent" className="text-center py-8">
         <p className="text-danger text-lg">
-          Failed to load {tab === 'config' ? 'config' : '.skillignore'}
+          Failed to load {tab === 'config' ? 'config' : tab === 'skillignore' ? '.skillignore' : '.agentignore'}
         </p>
         <p className="text-pencil-light text-sm mt-1">{error.message}</p>
       </Card>
@@ -291,6 +339,7 @@ export default function ConfigPage() {
           options={[
             { value: 'config' as ConfigTab, label: 'config.yaml' },
             { value: 'skillignore' as ConfigTab, label: '.skillignore' },
+            { value: 'agentignore' as ConfigTab, label: '.agentignore' },
           ]}
         />
       </div>
@@ -396,7 +445,8 @@ export default function ConfigPage() {
       {tab === 'skillignore' && (
         <div className="flex gap-4">
           <div className="flex-[3] min-w-0 transition-[flex] duration-300 ease-in-out">
-            <SkillignoreTab
+            <IgnoreTab
+              kind="skill"
               data={ignoreData!}
               raw={ignoreRaw}
               onChange={handleIgnoreChange}
@@ -432,6 +482,46 @@ export default function ConfigPage() {
         </div>
       )}
 
+      {tab === 'agentignore' && (
+        <div className="flex gap-4">
+          <div className="flex-[3] min-w-0 transition-[flex] duration-300 ease-in-out">
+            <IgnoreTab
+              kind="agent"
+              data={agentIgnoreData!}
+              raw={agentIgnoreRaw}
+              onChange={handleAgentIgnoreChange}
+              extensions={ignoreExtensions}
+              panelCollapsed={panelCollapsed}
+              onTogglePanel={togglePanel}
+            />
+          </div>
+
+          <div
+            className={`hidden lg:block transition-all duration-300 ease-in-out ${
+              panelCollapsed ? 'flex-[0] w-0 opacity-0 pointer-events-none overflow-hidden' : 'flex-[2] opacity-100 overflow-visible'
+            }`}
+          >
+            <Card className="!p-0 !overflow-visible min-w-[280px]">
+              <AssistantPanel
+                mode="agentignore"
+                errors={[]}
+                changeCount={agentIgnoreChangeCount}
+                fieldPath={null}
+                cursorLine={1}
+                source={agentIgnoreRaw}
+                diff={{ lines: [], changeCount: 0 }}
+                editorRef={editorRef}
+                collapsed={panelCollapsed}
+                onToggleCollapse={togglePanel}
+                onRevert={() => {}}
+                ignoredAgents={agentIgnoreData?.stats?.ignored_agents ?? []}
+              />
+            </Card>
+          </div>
+
+        </div>
+      )}
+
       <SyncPreviewModal
         open={showSyncPreview}
         onClose={() => setShowSyncPreview(false)}
@@ -460,7 +550,8 @@ export default function ConfigPage() {
   );
 }
 
-function SkillignoreTab({
+function IgnoreTab({
+  kind,
   data,
   raw,
   onChange,
@@ -468,7 +559,8 @@ function SkillignoreTab({
   panelCollapsed,
   onTogglePanel,
 }: {
-  data: SkillignoreResponse;
+  kind: 'skill' | 'agent';
+  data: SkillignoreResponse | AgentignoreResponse;
   raw: string;
   onChange: (value: string) => void;
   extensions: any[];
@@ -476,6 +568,8 @@ function SkillignoreTab({
   onTogglePanel?: () => void;
 }) {
   const stats = data.stats;
+  const fileName = kind === 'skill' ? '.skillignore' : '.agentignore';
+  const itemLabel = kind === 'skill' ? 'skill' : 'agent';
 
   return (
     <div className="space-y-4">
@@ -487,7 +581,7 @@ function SkillignoreTab({
           </span>
           {stats && stats.ignored_count > 0 && (
             <span className="text-xs text-pencil-light px-2 py-0.5 bg-muted rounded-full border border-muted-dark">
-              {stats.ignored_count} skill{stats.ignored_count !== 1 ? 's' : ''} ignored
+              {stats.ignored_count} {itemLabel}{stats.ignored_count !== 1 ? 's' : ''} ignored
             </span>
           )}
           <span className="flex-1" />
@@ -505,7 +599,7 @@ function SkillignoreTab({
 
         {!data.exists && (
           <p className="text-sm text-pencil-light mb-3">
-            Create a .skillignore file to hide skills from discovery. Uses gitignore syntax.
+            Create a {fileName} file to hide {itemLabel}s from discovery. Uses gitignore syntax.
           </p>
         )}
 

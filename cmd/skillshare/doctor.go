@@ -13,8 +13,10 @@ import (
 	"skillshare/internal/backup"
 	"skillshare/internal/config"
 	"skillshare/internal/install"
+	"skillshare/internal/resource"
 	"skillshare/internal/skillignore"
 	"skillshare/internal/sync"
+	"skillshare/internal/theme"
 	"skillshare/internal/trash"
 	"skillshare/internal/ui"
 	"skillshare/internal/utils"
@@ -141,7 +143,7 @@ func cmdDoctorGlobal(jsonMode bool) error {
 	ui.Header("Storage")
 	checkBackupStatus(result, false, backup.BackupDir())
 	checkTrashStatus(result, trash.TrashDir())
-	checkVersionDoctor(cfg, result)
+	checkVersionDoctor(cfg, result, false)
 
 	if jsonMode {
 		return finalizeDoctorJSON(restoreUI, result, updateCh)
@@ -187,10 +189,11 @@ func cmdDoctorProject(root string, jsonMode bool) error {
 	}
 
 	cfg := &config.Config{
-		Source:  rt.sourcePath,
-		Targets: rt.targets,
-		Mode:    "merge",
-		Audit:   rt.config.Audit,
+		Source:       rt.sourcePath,
+		AgentsSource: rt.agentsSourcePath,
+		Targets:      rt.targets,
+		Mode:         "merge",
+		Audit:        rt.config.Audit,
 	}
 
 	runDoctorChecks(cfg, result, true)
@@ -198,7 +201,7 @@ func cmdDoctorProject(root string, jsonMode bool) error {
 	ui.Header("Storage")
 	checkBackupStatus(result, true, "")
 	checkTrashStatus(result, trash.ProjectTrashDir(root))
-	checkVersionDoctor(cfg, result)
+	checkVersionDoctor(cfg, result, true)
 
 	if jsonMode {
 		return finalizeDoctorJSON(restoreUI, result, updateCh)
@@ -220,8 +223,10 @@ func runDoctorChecks(cfg *config.Config, result *doctorResult, isProject bool) {
 	sp.Stop()
 
 	checkSource(cfg, result, discovered, discoverErr)
+	checkAgentsSource(cfg, result)
 	checkSkillignore(result, stats)
 	checkSymlinkSupport(result)
+	checkTheme(result)
 
 	if !isProject {
 		checkGitStatus(cfg.Source, result)
@@ -231,7 +236,7 @@ func runDoctorChecks(cfg *config.Config, result *doctorResult, isProject bool) {
 	checkSkillsValidity(cfg.Source, result, discovered)
 	checkSkillIntegrity(result, discovered)
 	checkSkillTargetsField(result, discovered, targetNamesFromConfig(cfg.Targets))
-	targetCache := checkTargets(cfg, result)
+	targetCache := checkTargets(cfg, result, isProject)
 	printSymlinkCompatHint(cfg.Targets, cfg.Mode, isProject)
 	checkSyncDrift(cfg, result, discovered, targetCache)
 	checkBrokenSymlinks(cfg, result)
@@ -303,6 +308,39 @@ func checkSource(cfg *config.Config, result *doctorResult, discovered []sync.Dis
 	result.addCheck("source", checkPass, fmt.Sprintf("Source: %s (%d skills)", cfg.Source, skillCount), nil)
 }
 
+func checkAgentsSource(cfg *config.Config, result *doctorResult) {
+	agentsSource := cfg.EffectiveAgentsSource()
+	info, err := os.Stat(agentsSource)
+	if err != nil {
+		if os.IsNotExist(err) {
+			ui.Info("Agents source: %s (not created yet)", agentsSource)
+			result.addCheck("agents_source", checkPass, fmt.Sprintf("Agents source: %s (not created yet)", agentsSource), nil)
+			return
+		}
+		ui.Error("Agents source error: %s", err)
+		result.addError()
+		result.addCheck("agents_source", checkError, fmt.Sprintf("Agents source error: %v", err), nil)
+		return
+	}
+
+	if !info.IsDir() {
+		ui.Error("Agents source is not a directory: %s", agentsSource)
+		result.addError()
+		result.addCheck("agents_source", checkError, fmt.Sprintf("Agents source is not a directory: %s", agentsSource), nil)
+		return
+	}
+
+	agentCount := 0
+	entries, _ := os.ReadDir(agentsSource)
+	for _, e := range entries {
+		if !e.IsDir() && strings.HasSuffix(strings.ToLower(e.Name()), ".md") {
+			agentCount++
+		}
+	}
+	ui.Success("Agents source: %s (%d agents)", agentsSource, agentCount)
+	result.addCheck("agents_source", checkPass, fmt.Sprintf("Agents source: %s (%d agents)", agentsSource, agentCount), nil)
+}
+
 func checkSymlinkSupport(result *doctorResult) {
 	testLink := filepath.Join(os.TempDir(), "skillshare_symlink_test")
 	testTarget := filepath.Join(os.TempDir(), "skillshare_symlink_target")
@@ -324,6 +362,60 @@ func checkSymlinkSupport(result *doctorResult) {
 	result.addCheck("symlink_support", checkPass, "Link support: OK", nil)
 }
 
+// checkTheme reports the resolved theme mode and source. Emits a warning
+// status when the theme fell back to dark due to probe failure or non-TTY
+// environments — users can resolve by setting SKILLSHARE_THEME explicitly.
+func checkTheme(result *doctorResult) {
+	tm := theme.Get()
+
+	var status string
+	switch tm.Source {
+	case "env", "detected", "no-color":
+		status = checkPass
+	case "fallback-dark-no-tty", "fallback-dark-probe-failed":
+		status = checkWarning
+	default:
+		status = checkInfo
+	}
+
+	msg := fmt.Sprintf("Theme: %s (%s)", tm.Mode, tm.Source)
+	if tm.NoColor {
+		msg = "Theme: no-color mode"
+	}
+
+	details := []string{
+		fmt.Sprintf("source: %s", tm.Source),
+		fmt.Sprintf("override: SKILLSHARE_THEME=%s", envOrDefault("SKILLSHARE_THEME", "auto")),
+		fmt.Sprintf("no_color: %v", tm.NoColor),
+		fmt.Sprintf("term: %s", envOrDefault("TERM", "(unset)")),
+	}
+
+	switch status {
+	case checkPass:
+		ui.Success(msg)
+	case checkWarning:
+		ui.Warning(msg)
+		if tm.Source == "fallback-dark-probe-failed" {
+			ui.Info("  Tip: set SKILLSHARE_THEME=light or SKILLSHARE_THEME=dark for best colors")
+		}
+	default:
+		ui.Info(msg)
+	}
+
+	if status == checkWarning {
+		result.addWarning()
+	}
+	result.addCheck("theme", status, msg, details)
+}
+
+// envOrDefault returns the value of env var name or the given default.
+func envOrDefault(name, def string) string {
+	if v := os.Getenv(name); v != "" {
+		return v
+	}
+	return def
+}
+
 // cachedTargetStatus stores CheckStatusMerge/Copy results so checkSyncDrift
 // can reuse them without a second call.
 type cachedTargetStatus struct {
@@ -332,9 +424,22 @@ type cachedTargetStatus struct {
 	status      sync.TargetStatus
 }
 
-func checkTargets(cfg *config.Config, result *doctorResult) map[string]cachedTargetStatus {
+func checkTargets(cfg *config.Config, result *doctorResult, isProject bool) map[string]cachedTargetStatus {
 	ui.Header("Checking targets")
 	cache := make(map[string]cachedTargetStatus)
+
+	// Prepare agent context for per-target agent checks
+	agentsSource := cfg.EffectiveAgentsSource()
+	agentsExist := dirExists(agentsSource)
+	var discoveredAgents []resource.DiscoveredResource
+	if agentsExist {
+		all, _ := resource.AgentKind{}.Discover(agentsSource)
+		discoveredAgents = resource.ActiveAgents(all)
+	}
+	builtinAgents := config.DefaultAgentTargets()
+	if isProject {
+		builtinAgents = config.ProjectAgentTargets()
+	}
 
 	var details []string
 	hasError := false
@@ -362,14 +467,22 @@ func checkTargets(cfg *config.Config, result *doctorResult) map[string]cachedTar
 
 		targetIssues := checkTargetIssues(target, cfg.Source)
 
+		// Target name header
+		fmt.Printf("%s%s%s\n", ui.Bold, name, ui.Reset)
+
 		if len(targetIssues) > 0 {
-			ui.Error("%s [%s]: %s", name, mode, strings.Join(targetIssues, ", "))
+			fmt.Printf("  skills   %s[%s] %s%s\n", ui.Red, mode, strings.Join(targetIssues, ", "), ui.Reset)
 			result.addError()
 			details = append(details, fmt.Sprintf("%s: %s", name, strings.Join(targetIssues, ", ")))
 			hasError = true
 		} else {
-			cached := displayTargetStatus(name, target, cfg.Source, mode)
+			cached := displayTargetStatus(target, cfg.Source, mode)
 			cache[name] = cached
+		}
+
+		// Agent sub-check for this target
+		if agentsExist {
+			checkAgentTargetInline(name, target, builtinAgents, discoveredAgents, result)
 		}
 	}
 
@@ -426,9 +539,9 @@ func checkTargetIssues(target config.TargetConfig, source string) []string {
 	return targetIssues
 }
 
-func displayTargetStatus(name string, target config.TargetConfig, source, mode string) cachedTargetStatus {
+func displayTargetStatus(target config.TargetConfig, source, mode string) cachedTargetStatus {
 	sc := target.SkillsConfig()
-	var statusStr string
+	var statusWord, detail string
 	var cached cachedTargetStatus
 	cached.mode = mode
 	needsSync := false
@@ -440,12 +553,14 @@ func displayTargetStatus(name string, target config.TargetConfig, source, mode s
 		cached.syncedCount = linkedCount
 		switch status {
 		case sync.StatusMerged:
-			statusStr = fmt.Sprintf("merged (%d shared, %d local)", linkedCount, localCount)
+			statusWord = "merged"
+			detail = fmt.Sprintf("(%d shared, %d local)", linkedCount, localCount)
 		case sync.StatusLinked:
-			statusStr = "linked (needs sync to apply merge mode)"
+			statusWord = "linked"
+			detail = "(needs sync)"
 			needsSync = true
 		default:
-			statusStr = status.String()
+			statusWord = status.String()
 		}
 	case "copy":
 		status, managedCount, localCount := sync.CheckStatusCopy(sc.Path)
@@ -453,27 +568,34 @@ func displayTargetStatus(name string, target config.TargetConfig, source, mode s
 		cached.syncedCount = managedCount
 		switch status {
 		case sync.StatusCopied:
-			statusStr = fmt.Sprintf("copied (%d managed, %d local)", managedCount, localCount)
+			statusWord = "copied"
+			detail = fmt.Sprintf("(%d managed, %d local)", managedCount, localCount)
 		case sync.StatusLinked:
-			statusStr = "linked (needs sync to apply copy mode)"
+			statusWord = "linked"
+			detail = "(needs sync)"
 			needsSync = true
 		default:
-			statusStr = status.String()
+			statusWord = status.String()
 		}
 	default:
 		status := sync.CheckStatus(sc.Path, source)
 		cached.status = status
-		statusStr = status.String()
+		statusWord = status.String()
 		if status == sync.StatusMerged {
-			statusStr = "merged (needs sync to apply symlink mode)"
+			statusWord = "merged"
+			detail = "(needs sync)"
 			needsSync = true
 		}
 	}
 
+	statusColor := ui.Green
 	if needsSync {
-		ui.Warning("%s [%s]: %s", name, mode, statusStr)
+		statusColor = ui.Yellow
+	}
+	if detail != "" {
+		fmt.Printf("  skills   [%s] %s%s%s %s%s%s\n", mode, statusColor, statusWord, ui.Reset, ui.Dim, detail, ui.Reset)
 	} else {
-		ui.Success("%s [%s]: %s", name, mode, statusStr)
+		fmt.Printf("  skills   [%s] %s%s%s\n", mode, statusColor, statusWord, ui.Reset)
 	}
 	return cached
 }
@@ -635,7 +757,7 @@ func checkSkillIntegrity(result *doctorResult, discovered []sync.DiscoveredSkill
 		return
 	}
 
-	// Phase 1: filter to skills that have meta with file hashes (cheap ReadMeta only)
+	// Phase 1: filter to skills that have meta with file hashes
 	type verifiable struct {
 		name   string
 		path   string
@@ -644,22 +766,26 @@ func checkSkillIntegrity(result *doctorResult, discovered []sync.DiscoveredSkill
 	var toVerify []verifiable
 	var skippedNames []string
 
+	store := install.NewMetadataStore()
+	if len(discovered) > 0 {
+		sourceDir := strings.TrimSuffix(discovered[0].SourcePath, discovered[0].RelPath)
+		sourceDir = strings.TrimRight(sourceDir, `/\`)
+		store = install.LoadMetadataOrNew(sourceDir)
+	}
+
 	for _, skill := range discovered {
-		meta, err := install.ReadMeta(skill.SourcePath)
-		if err != nil {
-			continue
-		}
-		if meta == nil {
+		entry := store.GetByPath(skill.RelPath)
+		if entry == nil {
 			continue // Local skill without meta — expected, skip silently
 		}
-		if meta.FileHashes == nil {
+		if entry.FileHashes == nil {
 			skippedNames = append(skippedNames, skill.RelPath)
 			continue
 		}
 		toVerify = append(toVerify, verifiable{
 			name:   skill.RelPath,
 			path:   skill.SourcePath,
-			stored: meta.FileHashes,
+			stored: entry.FileHashes,
 		})
 	}
 
@@ -927,14 +1053,14 @@ func checkExtras(extras []config.ExtraConfig, result *doctorResult, isProject bo
 		files, err := sync.DiscoverExtraFiles(sourceDir)
 		if err != nil {
 			result.addError()
-			ui.Error("%s: source directory missing (%s)", extra.Name, sourceDir)
+			ui.Error("%s: source missing (%s)", extra.Name, sourceDir)
 			details = append(details, fmt.Sprintf("%s: source directory missing", extra.Name))
 			hasIssue = true
 			continue
 		}
-		ui.Success("%s: source exists (%d files)", extra.Name, len(files))
 
 		reachable := 0
+		var unreachableTargets []string
 		for _, t := range extra.Targets {
 			targetPath := config.ExpandPath(t.Path)
 			if isProject && !filepath.IsAbs(targetPath) {
@@ -943,14 +1069,17 @@ func checkExtras(extras []config.ExtraConfig, result *doctorResult, isProject bo
 			if _, err := os.Stat(filepath.Dir(targetPath)); err == nil {
 				reachable++
 			} else {
-				ui.Warning("%s: target %s not reachable (parent dir missing: %s)", extra.Name, t.Path, filepath.Dir(targetPath))
+				unreachableTargets = append(unreachableTargets, t.Path)
 			}
 		}
 		if reachable == len(extra.Targets) {
-			ui.Success("%s: all targets reachable (%d/%d)", extra.Name, reachable, len(extra.Targets))
+			ui.Success("%s: %d files, %d/%d targets OK", extra.Name, len(files), reachable, len(extra.Targets))
 		} else {
 			result.addWarning()
-			ui.Warning("%s: some targets unreachable (%d/%d)", extra.Name, reachable, len(extra.Targets))
+			ui.Warning("%s: %d files, %d/%d targets unreachable", extra.Name, len(files), len(extra.Targets)-reachable, len(extra.Targets))
+			for _, t := range unreachableTargets {
+				fmt.Printf("  %s%s (parent dir missing)%s\n", ui.Dim, t, ui.Reset)
+			}
 			details = append(details, fmt.Sprintf("%s: %d/%d targets unreachable", extra.Name, len(extra.Targets)-reachable, len(extra.Targets)))
 			hasIssue = true
 		}
@@ -1061,22 +1190,34 @@ func formatBytes(b int64) string {
 }
 
 // checkVersionDoctor checks CLI and skill versions
-func checkVersionDoctor(cfg *config.Config, result *doctorResult) {
+func checkVersionDoctor(cfg *config.Config, result *doctorResult, isProject bool) {
 	ui.Header("Version")
 
 	// CLI version
 	ui.Success("CLI: %s", version)
 	result.addCheck("cli_version", checkPass, fmt.Sprintf("CLI: %s", version), nil)
 
-	// Skill version (reads metadata.version from SKILL.md)
+	// Skill version: try SKILL.md frontmatter first, then metadata store
 	localVersion := versioncheck.ReadLocalSkillVersion(cfg.Source)
 	if localVersion == "" {
-		// Distinguish "file not found" from "version field missing"
+		// Try metadata store (tracks installed version even without metadata.version in SKILL.md)
+		store := install.LoadMetadataOrNew(cfg.Source)
+		if entry := store.Get("skillshare"); entry != nil && entry.Version != "" {
+			localVersion = strings.TrimPrefix(entry.Version, "v")
+		}
+	}
+
+	if localVersion == "" {
 		skillFile := filepath.Join(cfg.Source, "skillshare", "SKILL.md")
 		if _, err := os.Stat(skillFile); os.IsNotExist(err) {
-			ui.Warning("Skill: not found")
-			ui.Info("  Run: skillshare upgrade --skill")
-			result.addCheck("skill_version", checkWarning, "Skill: not found", nil)
+			if isProject {
+				ui.Info("Skill: not installed")
+				result.addCheck("skill_version", checkInfo, "Skill: not installed in project", nil)
+			} else {
+				ui.Warning("Skill: not found")
+				ui.Info("  Run: skillshare upgrade --skill")
+				result.addCheck("skill_version", checkWarning, "Skill: not found", nil)
+			}
 		} else {
 			ui.Warning("Skill: missing version")
 			result.addCheck("skill_version", checkWarning, "Skill: missing version", nil)

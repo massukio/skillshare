@@ -359,6 +359,19 @@ Binary files (images, `.wasm`, etc.) and hidden directories (`.git`) are skipped
 |-----------|-------------|
 | `rules` | Browse, enable, and disable audit rules (see [`audit rules`](/docs/reference/commands/audit-rules)) |
 
+## Agent Support
+
+`skillshare audit agents` scopes the security scan to agents only, scanning `.md` files in the agents source directory:
+
+```bash
+skillshare audit agents                    # Scan all agents
+skillshare audit agents --threshold high   # Block on HIGH+ for agents
+skillshare audit agents --format sarif     # SARIF output for agents
+skillshare audit agents -p                 # Scan project agents
+```
+
+Agents are subject to the same audit rules, severity levels, and threshold gating as skills. Without the `agents` argument, `audit` scans skills only (default behavior). See [Agents](/docs/understand/agents) for background.
+
 ## See Also
 
 - [Audit Engine](/docs/understand/audit-engine) — How the engine works (threat model, risk scoring, command tiering)
@@ -370,3 +383,4 @@ Binary files (images, `.wasm`, etc.) and hidden directories (`.git`) are skipped
 - [Securing Your Skills](/docs/how-to/advanced/security) — Security guide for teams and organizations
 - [CI/CD Skill Validation](/docs/how-to/recipes/ci-cd-skill-validation) — Pipeline automation recipe
 - [Pre-commit Hook](/docs/how-to/recipes/pre-commit-hook) — Automatic audit on every commit
+- [Agents](/docs/understand/agents) — Agent concepts

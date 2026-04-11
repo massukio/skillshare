@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"time"
 
@@ -13,6 +14,7 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 
+	"skillshare/internal/theme"
 	"skillshare/internal/trash"
 )
 
@@ -33,9 +35,15 @@ func (i trashItem) Title() string {
 	if i.selected {
 		check = "[x]"
 	}
+	var kindBadge string
+	if i.entry.Kind == "agent" {
+		kindBadge = theme.Accent().Render("[A]") + " "
+	} else {
+		kindBadge = theme.Accent().Render("[S]") + " "
+	}
 	age := formatAge(time.Since(i.entry.Date))
 	size := formatBytes(i.entry.Size)
-	return fmt.Sprintf("%s %s  (%s, %s ago)", check, i.entry.Name, size, age)
+	return fmt.Sprintf("%s %s%s  (%s, %s ago)", check, kindBadge, i.entry.Name, size, age)
 }
 
 func (i trashItem) Description() string { return "" }
@@ -51,14 +59,16 @@ type trashOpDoneMsg struct {
 
 // trashTUIModel is the bubbletea model for the interactive trash viewer.
 type trashTUIModel struct {
-	list       list.Model
-	modeLabel  string // "global" or "project"
-	trashBase  string
-	destDir    string
-	cfgPath    string
-	quitting   bool
-	termWidth  int
-	termHeight int
+	list           list.Model
+	modeLabel      string // "global" or "project"
+	skillTrashBase string // for reload after operations
+	agentTrashBase string // for reload after operations
+	destDir        string // skill restore destination
+	agentDestDir   string // agent restore destination
+	cfgPath        string
+	quitting       bool
+	termWidth      int
+	termHeight     int
 
 	// All items (source of truth for filter + selection)
 	allItems []trashItem
@@ -90,7 +100,7 @@ type trashTUIModel struct {
 	detailScroll int
 }
 
-func newTrashTUIModel(items []trash.TrashEntry, trashBase, destDir, cfgPath, modeLabel string) trashTUIModel {
+func newTrashTUIModel(items []trash.TrashEntry, skillTrashBase, agentTrashBase, destDir, agentDestDir, cfgPath, modeLabel string) trashTUIModel {
 	allItems := make([]trashItem, len(items))
 	listItems := make([]list.Item, len(items))
 	for i, entry := range items {
@@ -101,7 +111,7 @@ func newTrashTUIModel(items []trash.TrashEntry, trashBase, destDir, cfgPath, mod
 
 	l := list.New(listItems, newPrefixDelegate(false), 0, 0)
 	l.Title = trashTUITitle(modeLabel, len(items))
-	l.Styles.Title = tc.ListTitle
+	l.Styles.Title = theme.Title()
 	l.SetShowStatusBar(false)
 	l.SetFilteringEnabled(false)
 	l.SetShowHelp(false)
@@ -110,25 +120,27 @@ func newTrashTUIModel(items []trash.TrashEntry, trashBase, destDir, cfgPath, mod
 	// Spinner for operations
 	sp := spinner.New()
 	sp.Spinner = spinner.Dot
-	sp.Style = tc.SpinnerStyle
+	sp.Style = theme.Accent()
 
 	// Filter text input
 	fi := textinput.New()
 	fi.Prompt = "/ "
-	fi.PromptStyle = tc.Filter
-	fi.Cursor.Style = tc.Filter
+	fi.PromptStyle = theme.Accent()
+	fi.Cursor.Style = theme.Accent()
 
 	return trashTUIModel{
-		list:        l,
-		modeLabel:   modeLabel,
-		trashBase:   trashBase,
-		destDir:     destDir,
-		cfgPath:     cfgPath,
-		allItems:    allItems,
-		matchCount:  len(allItems),
-		filterInput: fi,
-		selected:    make(map[int]bool),
-		opSpinner:   sp,
+		list:           l,
+		modeLabel:      modeLabel,
+		skillTrashBase: skillTrashBase,
+		agentTrashBase: agentTrashBase,
+		destDir:        destDir,
+		agentDestDir:   agentDestDir,
+		cfgPath:        cfgPath,
+		allItems:       allItems,
+		matchCount:     len(allItems),
+		filterInput:    fi,
+		selected:       make(map[int]bool),
+		opSpinner:      sp,
 	}
 }
 
@@ -222,12 +234,12 @@ func (m trashTUIModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		verb := capitalize(msg.action) + "d"
 		switch {
 		case msg.err != nil && msg.count > 0:
-			m.lastOpMsg = tc.Green.Render(fmt.Sprintf("%s %d item(s)", verb, msg.count)) +
-				"  " + tc.Red.Render(fmt.Sprintf("Failed: %s", msg.err))
+			m.lastOpMsg = theme.Success().Render(fmt.Sprintf("%s %d item(s)", verb, msg.count)) +
+				"  " + theme.Danger().Render(fmt.Sprintf("Failed: %s", msg.err))
 		case msg.err != nil:
-			m.lastOpMsg = tc.Red.Render(fmt.Sprintf("Error: %s", msg.err))
+			m.lastOpMsg = theme.Danger().Render(fmt.Sprintf("Error: %s", msg.err))
 		default:
-			m.lastOpMsg = tc.Green.Render(fmt.Sprintf("%s %d item(s)", verb, msg.count))
+			m.lastOpMsg = theme.Success().Render(fmt.Sprintf("%s %d item(s)", verb, msg.count))
 		}
 		m.rebuildFromEntries(msg.reloadedItems)
 		return m, nil
@@ -492,9 +504,11 @@ func (m trashTUIModel) startOperation() (tea.Model, tea.Cmd) {
 	} else {
 		entries = m.selectedEntries()
 	}
-	trashBase := m.trashBase
 	destDir := m.destDir
+	agentDestDir := m.agentDestDir
 	cfgPath := m.cfgPath
+	skillTrashBase := m.skillTrashBase
+	agentTrashBase := m.agentTrashBase
 
 	cmd := func() tea.Msg {
 		start := time.Now()
@@ -505,8 +519,14 @@ func (m trashTUIModel) startOperation() (tea.Model, tea.Cmd) {
 		case "restore":
 			for _, entry := range entries {
 				e := entry // copy for closure
-				if err := trash.Restore(&e, destDir); err != nil {
-					errMsgs = append(errMsgs, fmt.Sprintf("%s: %s", entry.Name, err))
+				var restoreErr error
+				if e.Kind == "agent" {
+					restoreErr = trash.RestoreAgent(&e, agentDestDir)
+				} else {
+					restoreErr = trash.Restore(&e, destDir)
+				}
+				if restoreErr != nil {
+					errMsgs = append(errMsgs, fmt.Sprintf("%s: %s", entry.Name, restoreErr))
 					continue // don't stop — process remaining items
 				}
 				count++
@@ -530,8 +550,19 @@ func (m trashTUIModel) startOperation() (tea.Model, tea.Cmd) {
 		// Log the operation
 		logTrashOp(cfgPath, action, count, "", start, opErr)
 
-		// Reload items from disk
-		reloaded := trash.List(trashBase)
+		// Reload items from disk — merge skill + agent trash
+		var reloaded []trash.TrashEntry
+		for _, e := range trash.List(skillTrashBase) {
+			e.Kind = "skill"
+			reloaded = append(reloaded, e)
+		}
+		for _, e := range trash.List(agentTrashBase) {
+			e.Kind = "agent"
+			reloaded = append(reloaded, e)
+		}
+		sort.Slice(reloaded, func(i, j int) bool {
+			return reloaded[i].Date.After(reloaded[j].Date)
+		})
 		return trashOpDoneMsg{
 			action:        action,
 			count:         count,
@@ -620,7 +651,7 @@ func (m trashTUIModel) viewTrashSplit() string {
 	}
 
 	help := appendScrollInfo(m.trashHelpBar(), scrollInfo)
-	b.WriteString(tc.Help.Render(help))
+	b.WriteString(theme.Dim().MarginLeft(2).Render(help))
 	b.WriteString("\n")
 
 	return b.String()
@@ -656,7 +687,7 @@ func (m trashTUIModel) viewTrashVertical() string {
 	}
 
 	help := appendScrollInfo(m.trashHelpBar(), scrollInfo)
-	b.WriteString(tc.Help.Render(help))
+	b.WriteString(theme.Dim().MarginLeft(2).Render(help))
 	b.WriteString("\n")
 
 	return b.String()
@@ -670,14 +701,15 @@ func (m trashTUIModel) viewConfirm() string {
 	verb := m.confirmAction
 	switch verb {
 	case "restore":
-		b.WriteString(fmt.Sprintf("  Restore %d item(s) to %s?\n\n", len(m.confirmNames), m.destDir))
+		b.WriteString(m.renderRestoreConfirmHeader())
+		b.WriteString("\n")
 	case "delete":
 		b.WriteString("  ")
-		b.WriteString(tc.Red.Render(fmt.Sprintf("Permanently delete %d item(s)?", len(m.confirmNames))))
+		b.WriteString(theme.Danger().Render(fmt.Sprintf("Permanently delete %d item(s)?", len(m.confirmNames))))
 		b.WriteString("\n\n")
 	case "empty":
 		b.WriteString("  ")
-		b.WriteString(tc.Red.Render(fmt.Sprintf("Empty trash — permanently delete ALL %d item(s)?", len(m.confirmNames))))
+		b.WriteString(theme.Danger().Render(fmt.Sprintf("Empty trash — permanently delete ALL %d item(s)?", len(m.confirmNames))))
 		b.WriteString("\n\n")
 	}
 
@@ -694,10 +726,36 @@ func (m trashTUIModel) viewConfirm() string {
 	}
 
 	b.WriteString("\n  ")
-	b.WriteString(tc.Help.Render("y confirm  n cancel"))
+	b.WriteString(theme.Dim().MarginLeft(2).Render("y confirm  n cancel"))
 	b.WriteString("\n")
 
 	return b.String()
+}
+
+func (m trashTUIModel) renderRestoreConfirmHeader() string {
+	var hasSkills, hasAgents bool
+	for _, entry := range m.selectedEntries() {
+		switch entry.Kind {
+		case "agent":
+			hasAgents = true
+		default:
+			hasSkills = true
+		}
+	}
+
+	switch {
+	case hasSkills && hasAgents:
+		return fmt.Sprintf(
+			"  Restore %d item(s)?\n\n    skills -> %s\n    agents -> %s\n",
+			len(m.confirmNames),
+			m.destDir,
+			m.agentDestDir,
+		)
+	case hasAgents:
+		return fmt.Sprintf("  Restore %d item(s) to %s?\n", len(m.confirmNames), m.agentDestDir)
+	default:
+		return fmt.Sprintf("  Restore %d item(s) to %s?\n", len(m.confirmNames), m.destDir)
+	}
 }
 
 // ---------------------------------------------------------------------------
@@ -736,11 +794,11 @@ func (m trashTUIModel) renderTrashSummaryFooter() string {
 		totalSize += item.entry.Size
 	}
 	parts := []string{
-		tc.Emphasis.Render(formatNumber(m.matchCount)) + tc.Dim.Render("/") +
-			tc.Dim.Render(formatNumber(len(m.allItems))) + tc.Dim.Render(" items"),
-		tc.Dim.Render("Total: ") + tc.Cyan.Render(formatBytes(totalSize)),
+		theme.Primary().Render(formatNumber(m.matchCount)) + theme.Dim().Render("/") +
+			theme.Dim().Render(formatNumber(len(m.allItems))) + theme.Dim().Render(" items"),
+		theme.Dim().Render("Total: ") + theme.Accent().Render(formatBytes(totalSize)),
 	}
-	return tc.Help.Render(strings.Join(parts, tc.Dim.Render(" | "))) + "\n"
+	return theme.Dim().MarginLeft(2).Render(strings.Join(parts, theme.Dim().Render(" | "))) + "\n"
 }
 
 // renderTrashDetailPanel renders the detail section for the selected trash entry.
@@ -748,7 +806,7 @@ func (m trashTUIModel) renderTrashDetailPanel(entry trash.TrashEntry, width int)
 	var b strings.Builder
 
 	// Header: bold skill name
-	b.WriteString(tc.Title.Render(entry.Name))
+	b.WriteString(theme.Title().Render(entry.Name))
 	b.WriteString("\n\n")
 
 	// Metadata rows
@@ -756,10 +814,15 @@ func (m trashTUIModel) renderTrashDetailPanel(entry trash.TrashEntry, width int)
 	row := func(label, value string) {
 		b.WriteString(labelStyle.Render(label + ":"))
 		b.WriteString(" ")
-		b.WriteString(tc.Value.Render(value))
+		b.WriteString(lipgloss.NewStyle().Render(value))
 		b.WriteString("\n")
 	}
 
+	if entry.Kind == "agent" {
+		row("Type", theme.Accent().Render("Agent"))
+	} else {
+		row("Type", theme.Accent().Render("Skill"))
+	}
 	row("Trashed", entry.Date.Format("2006-01-02 15:04:05"))
 	row("Age", formatAge(time.Since(entry.Date))+" ago")
 	row("Size", formatBytes(entry.Size))
@@ -772,21 +835,38 @@ func (m trashTUIModel) renderTrashDetailPanel(entry trash.TrashEntry, width int)
 	}
 	row("Path", pathStr)
 
-	// SKILL.md preview — read first 15 lines
-	skillMD := filepath.Join(entry.Path, "SKILL.md")
-	if data, err := os.ReadFile(skillMD); err == nil {
-		lines := strings.SplitN(string(data), "\n", 16)
-		if len(lines) > 15 {
-			lines = lines[:15]
+	// Content preview — SKILL.md for skills, agent .md file for agents
+	var previewFile, previewTitle string
+	if entry.Kind == "agent" {
+		// Find the .md file inside the trash directory
+		if entries, readErr := os.ReadDir(entry.Path); readErr == nil {
+			for _, e := range entries {
+				if !e.IsDir() && strings.HasSuffix(e.Name(), ".md") {
+					previewFile = filepath.Join(entry.Path, e.Name())
+					previewTitle = e.Name()
+					break
+				}
+			}
 		}
-		preview := strings.TrimRight(strings.Join(lines, "\n"), "\n")
-		if preview != "" {
-			b.WriteString("\n")
-			b.WriteString(tc.Title.Render("SKILL.md"))
-			b.WriteString("\n")
-			for _, line := range strings.Split(preview, "\n") {
-				b.WriteString(tc.Dim.Render(line))
+	} else {
+		previewFile = filepath.Join(entry.Path, "SKILL.md")
+		previewTitle = "SKILL.md"
+	}
+	if previewFile != "" {
+		if data, err := os.ReadFile(previewFile); err == nil {
+			lines := strings.SplitN(string(data), "\n", 16)
+			if len(lines) > 15 {
+				lines = lines[:15]
+			}
+			preview := strings.TrimRight(strings.Join(lines, "\n"), "\n")
+			if preview != "" {
 				b.WriteString("\n")
+				b.WriteString(theme.Title().Render(previewTitle))
+				b.WriteString("\n")
+				for _, line := range strings.Split(preview, "\n") {
+					b.WriteString(theme.Dim().Render(line))
+					b.WriteString("\n")
+				}
 			}
 		}
 	}
@@ -799,8 +879,8 @@ func (m trashTUIModel) renderTrashDetailPanel(entry trash.TrashEntry, width int)
 // ---------------------------------------------------------------------------
 
 // runTrashTUI starts the bubbletea TUI for the trash viewer.
-func runTrashTUI(items []trash.TrashEntry, trashBase, destDir, cfgPath, modeLabel string) error {
-	model := newTrashTUIModel(items, trashBase, destDir, cfgPath, modeLabel)
+func runTrashTUI(items []trash.TrashEntry, skillTrashBase, agentTrashBase, destDir, agentDestDir, cfgPath, modeLabel string) error {
+	model := newTrashTUIModel(items, skillTrashBase, agentTrashBase, destDir, agentDestDir, cfgPath, modeLabel)
 	p := tea.NewProgram(model, tea.WithAltScreen(), tea.WithMouseCellMotion())
 	_, err := p.Run()
 	return err

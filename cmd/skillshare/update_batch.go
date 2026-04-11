@@ -2,12 +2,10 @@ package main
 
 import (
 	"fmt"
-	"path/filepath"
 	"strings"
 	"time"
 
 	"skillshare/internal/audit"
-	"skillshare/internal/config"
 	"skillshare/internal/install"
 	"skillshare/internal/trash"
 	"skillshare/internal/ui"
@@ -42,6 +40,7 @@ func (uc *updateContext) makeInstallOpts() install.InstallOptions {
 		Update:         true,
 		SkipAudit:      uc.opts.skipAudit,
 		AuditThreshold: uc.opts.threshold,
+		SourceDir:      uc.sourcePath,
 	}
 	if uc.isProject() {
 		opts.AuditProjectRoot = uc.projectRoot
@@ -337,36 +336,24 @@ func pruneSkill(skillPath, name string, uc *updateContext) error {
 	return err
 }
 
-// pruneRegistry removes pruned skill entries from the registry.
+// pruneRegistry removes pruned skill entries from the metadata store.
 func pruneRegistry(prunedNames []string, uc *updateContext) {
-	var regDir string
-	if uc.isProject() {
-		regDir = filepath.Join(uc.projectRoot, ".skillshare")
-	} else {
-		regDir = uc.registryDir
-	}
-
-	reg, err := config.LoadRegistry(regDir)
-	if err != nil || len(reg.Skills) == 0 {
+	store, err := install.LoadMetadata(uc.sourcePath)
+	if err != nil {
 		return
 	}
 
-	removedSet := make(map[string]bool, len(prunedNames))
-	for _, n := range prunedNames {
-		removedSet[n] = true
-	}
-
-	updated := make([]config.SkillEntry, 0, len(reg.Skills))
-	for _, s := range reg.Skills {
-		if !removedSet[s.FullName()] {
-			updated = append(updated, s)
+	changed := false
+	for _, name := range prunedNames {
+		if store.Has(name) {
+			store.Remove(name)
+			changed = true
 		}
 	}
 
-	if len(updated) != len(reg.Skills) {
-		reg.Skills = updated
-		if saveErr := reg.Save(regDir); saveErr != nil {
-			ui.Warning("Failed to update registry after prune: %v", saveErr)
+	if changed {
+		if saveErr := store.Save(uc.sourcePath); saveErr != nil {
+			ui.Warning("Failed to update metadata after prune: %v", saveErr)
 		}
 	}
 }

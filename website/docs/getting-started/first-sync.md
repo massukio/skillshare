@@ -135,6 +135,7 @@ You should see:
 - [Create your own skill](/docs/how-to/daily-tasks/creating-skills)
 - [Sync across machines](/docs/how-to/sharing/cross-machine-sync)
 - [Organization-wide skills](/docs/how-to/sharing/organization-sharing)
+- [Agents](/docs/understand/agents) — Manage single-file `.md` agents alongside skills (supported by Claude, Cursor, OpenCode, Augment)
 
 ## What Just Happened?
 

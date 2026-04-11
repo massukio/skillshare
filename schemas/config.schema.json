@@ -13,6 +13,12 @@
       "default": "~/.config/skillshare/skills",
       "examples": ["~/.config/skillshare/skills", "/home/user/my-skills"]
     },
+    "agents_source": {
+      "type": "string",
+      "description": "Path to the agents source directory. Supports ~ for home directory. Defaults to ~/.config/skillshare/agents if not set.",
+      "default": "~/.config/skillshare/agents",
+      "examples": ["~/.config/skillshare/agents", "/home/user/my-agents"]
+    },
     "mode": {
       "type": "string",
       "description": "Default sync mode for all targets.",

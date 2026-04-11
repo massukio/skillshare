@@ -27,6 +27,8 @@ import { api, type CollectScanTarget, type CollectResult } from '../api/client';
 import { queryKeys } from '../lib/queryKeys';
 import { radius, shadows } from '../design';
 import { formatSize } from '../lib/format';
+import KindBadge from '../components/KindBadge';
+import SegmentedControl from '../components/SegmentedControl';
 
 type Phase = 'idle' | 'scanning' | 'scanned' | 'collecting' | 'done';
 
@@ -43,6 +45,23 @@ export default function CollectPage() {
   const [result, setResult] = useState<CollectResult | null>(null);
   const [confirming, setConfirming] = useState(false);
   const { toast } = useToast();
+  const [scope, setScope] = useState<'skill' | 'agent' | 'both'>('skill');
+
+  const scopeLabels = {
+    skill: { noun: 'skill', nounPlural: 'skills', scanBtn: 'Scan for Local Skills', entity: 'Skills' },
+    agent: { noun: 'agent', nounPlural: 'agents', scanBtn: 'Scan for Local Agents', entity: 'Agents' },
+    both: { noun: 'resource', nounPlural: 'resources', scanBtn: 'Scan for Local Resources', entity: 'Resources' },
+  };
+  const labels = scopeLabels[scope];
+
+  // Reset state when scope changes
+  useEffect(() => {
+    setPhase('idle');
+    setScanTargets([]);
+    setTotalCount(0);
+    setSelected(new Set());
+    setResult(null);
+  }, [scope]);
 
   // Auto-scan when target query param is present
   useEffect(() => {
@@ -56,14 +75,14 @@ export default function CollectPage() {
     setPhase('scanning');
     setResult(null);
     try {
-      const res = await api.collectScan(targetFilter);
+      const res = await api.collectScan(targetFilter, scope === 'both' ? undefined : scope);
       setScanTargets(res.targets);
       setTotalCount(res.totalCount);
       // Auto-select all
       const allKeys = new Set<string>();
       for (const t of res.targets) {
         for (const sk of t.skills) {
-          allKeys.add(`${t.targetName}/${sk.name}`);
+          allKeys.add(`${t.targetName}/${sk.kind ?? 'skill'}/${sk.name}`);
         }
       }
       setSelected(allKeys);
@@ -78,8 +97,8 @@ export default function CollectPage() {
     setPhase('collecting');
     try {
       const skills = Array.from(selected).map((key) => {
-        const [targetName, ...rest] = key.split('/');
-        return { name: rest.join('/'), targetName };
+        const [targetName, kind, ...rest] = key.split('/');
+        return { name: rest.join('/'), targetName, kind };
       });
       const res = await api.collect({ skills, force });
       setResult(res);
@@ -113,7 +132,7 @@ export default function CollectPage() {
       const allKeys = new Set<string>();
       for (const t of scanTargets) {
         for (const sk of t.skills) {
-          allKeys.add(`${t.targetName}/${sk.name}`);
+          allKeys.add(`${t.targetName}/${sk.kind ?? 'skill'}/${sk.name}`);
         }
       }
       setSelected(allKeys);
@@ -124,7 +143,7 @@ export default function CollectPage() {
 
   return (
     <div className="space-y-5 animate-fade-in">
-      <PageHeader icon={<ArrowDownToLine size={24} strokeWidth={2.5} />} title="Collect" subtitle="Pull local skills from targets back to source" />
+      <PageHeader icon={<ArrowDownToLine size={24} strokeWidth={2.5} />} title="Collect" subtitle="Pull local resources from targets back to source" />
 
       {/* Visual Pipeline (reverse direction) */}
       <div className="hidden md:flex items-center justify-center gap-4">
@@ -192,17 +211,29 @@ export default function CollectPage() {
       {/* Scan control area */}
       <Card className="text-center">
         <div data-tour="collect-scan" className="flex flex-col items-center gap-4">
-          <Button
-            onClick={() => handleScan(presetTarget)}
-            loading={phase === 'scanning'}
-            disabled={phase === 'collecting'}
-            variant="primary"
-            size="lg"
-            className="min-w-[200px]"
-          >
-            {phase !== 'scanning' && <ArrowDownToLine size={22} strokeWidth={2.5} />}
-            {phase === 'scanning' ? 'Scanning...' : phase === 'idle' ? 'Scan for Local Skills' : 'Re-scan'}
-          </Button>
+          <div className="flex flex-wrap items-center justify-center gap-3">
+            <SegmentedControl
+              value={scope}
+              onChange={setScope}
+              options={[
+                { value: 'skill' as const, label: 'Skills' },
+                { value: 'agent' as const, label: 'Agents' },
+                { value: 'both' as const, label: 'Both' },
+              ]}
+              size="sm"
+              connected
+            />
+            <Button
+              onClick={() => handleScan(presetTarget)}
+              loading={phase === 'scanning'}
+              disabled={phase === 'collecting'}
+              variant="primary"
+              size="sm"
+            >
+              {phase !== 'scanning' && <ArrowDownToLine size={18} strokeWidth={2.5} />}
+              {phase === 'scanning' ? 'Scanning...' : phase === 'idle' ? labels.scanBtn : 'Re-scan'}
+            </Button>
+          </div>
 
           {presetTarget && (
             <p className="text-sm text-pencil-light">
@@ -233,8 +264,8 @@ export default function CollectPage() {
           {totalCount === 0 ? (
             <EmptyState
               icon={CheckCircle}
-              title="No local skills found"
-              description="All skills in your targets are synced from source. Nothing to collect."
+              title={`No local ${labels.nounPlural} found`}
+              description={`All ${labels.nounPlural} in your targets are synced from source. Nothing to collect.`}
             />
           ) : (
             <div>
@@ -243,7 +274,7 @@ export default function CollectPage() {
                 <h3
                   className="text-xl font-bold text-pencil"
                 >
-                  Found {totalCount} local skill{totalCount !== 1 ? 's' : ''}
+                  Found {totalCount} local {totalCount !== 1 ? labels.nounPlural : labels.noun}
                 </h3>
                 <div className="flex gap-2">
                   <Button
@@ -292,7 +323,7 @@ export default function CollectPage() {
                     {phase !== 'collecting' && <ArrowDownToLine size={22} strokeWidth={2.5} />}
                     {phase === 'collecting'
                       ? 'Collecting...'
-                      : `Collect ${selected.size} Skill${selected.size !== 1 ? 's' : ''}`}
+                      : `Collect ${selected.size} ${labels.entity}`}
                   </Button>
                 </div>
               )}
@@ -311,7 +342,7 @@ export default function CollectPage() {
             <p
               className="text-base text-pencil"
             >
-              Skills collected to source! Run Sync to distribute them to all targets.
+              {labels.entity} collected to source! Run Sync to distribute them to all targets.
             </p>
             <Link to="/sync">
               <Button variant="primary" size="sm">
@@ -330,11 +361,11 @@ export default function CollectPage() {
         message={
           <div className="text-left">
             <p className="mb-2">
-              Copy {selected.size} skill{selected.size !== 1 ? 's' : ''} to source{force ? ' (force overwrite)' : ''}?
+              Copy {selected.size} {selected.size !== 1 ? labels.nounPlural : labels.noun} to source{force ? ' (force overwrite)' : ''}?
             </p>
             <ul className="list-none space-y-1 max-h-40 overflow-y-auto">
               {Array.from(selected).map((key) => {
-                const [targetName, ...rest] = key.split('/');
+                const [targetName, , ...rest] = key.split('/');
                 return (
                   <li key={key} className="flex items-center gap-2 text-sm">
                     <Folder size={12} strokeWidth={2.5} className="text-warning shrink-0" />
@@ -346,7 +377,7 @@ export default function CollectPage() {
             </ul>
           </div>
         }
-        confirmText={`Collect ${selected.size} Skill${selected.size !== 1 ? 's' : ''}`}
+        confirmText={`Collect ${selected.size} ${labels.entity}`}
         onConfirm={() => {
           setConfirming(false);
           handleCollect();
@@ -371,7 +402,7 @@ function ScanTargetCard({
 }) {
   const [expanded, setExpanded] = useState(true);
   const skills = target.skills ?? [];
-  const selectedCount = skills.filter((sk) => selected.has(`${target.targetName}/${sk.name}`)).length;
+  const selectedCount = skills.filter((sk) => selected.has(`${target.targetName}/${sk.kind ?? 'skill'}/${sk.name}`)).length;
 
   return (
     <Card>
@@ -398,7 +429,7 @@ function ScanTargetCard({
       {expanded && skills.length > 0 && (
         <div className="mt-3 pl-8 space-y-2 animate-fade-in">
           {skills.map((sk) => {
-            const key = `${target.targetName}/${sk.name}`;
+            const key = `${target.targetName}/${sk.kind ?? 'skill'}/${sk.name}`;
             const isSelected = selected.has(key);
             return (
               <div
@@ -415,6 +446,7 @@ function ScanTargetCard({
                   <Checkbox label="" checked={isSelected} onChange={() => onToggle(key)} size="sm" disabled={disabled} />
                 </span>
                 <Folder size={14} strokeWidth={2.5} className="text-warning shrink-0" />
+                {sk.kind && <KindBadge kind={sk.kind} />}
                 <span className="font-mono font-medium text-pencil text-sm">
                   {sk.name}
                 </span>

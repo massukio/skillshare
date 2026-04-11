@@ -3,7 +3,6 @@ package audit
 import (
 	"crypto/sha256"
 	"encoding/hex"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
@@ -131,6 +130,7 @@ type Finding struct {
 // Result holds all findings for a single skill.
 type Result struct {
 	SkillName      string      `json:"skillName"`
+	Kind           string      `json:"kind,omitempty"` // "skill" or "agent" — set by caller
 	Findings       []Finding   `json:"findings"`
 	RiskScore      int         `json:"riskScore"`
 	RiskLabel      string      `json:"riskLabel"` // "clean", "low", "medium", "high", "critical"
@@ -1633,30 +1633,22 @@ func isExternalOrAnchor(target string) bool {
 	return strings.HasPrefix(target, "#")
 }
 
-// checkContentIntegrity compares files on disk against pinned hashes in
-// .skillshare-meta.json. Backward-compatible: skips silently when meta or
-// file_hashes is absent. cache holds file contents already read during the
-// walk phase; files not in cache are read from disk as fallback.
+// checkContentIntegrity compares files on disk against pinned hashes in the
+// centralized .metadata.json store. Backward-compatible: skips silently when
+// metadata or file_hashes is absent. cache holds file contents already read
+// during the walk phase; files not in cache are read from disk as fallback.
 // allFiles (if non-nil) is the set of file relPaths collected during the main
 // walk, used to detect unexpected files without a second filepath.Walk.
 func checkContentIntegrity(skillPath string, cache map[string][]byte, allFiles map[string]bool) []Finding {
-	metaPath := filepath.Join(skillPath, ".skillshare-meta.json")
-	data, err := os.ReadFile(metaPath)
-	if err != nil {
-		return nil // no meta → skip
-	}
-
-	var raw struct {
-		FileHashes map[string]string `json:"file_hashes"`
-	}
-	if err := json.Unmarshal(data, &raw); err != nil || len(raw.FileHashes) == 0 {
-		return nil // no hashes → skip
+	fileHashes := readMetaFileHashes(skillPath)
+	if len(fileHashes) == 0 {
+		return nil
 	}
 
 	var findings []Finding
 
 	// Check pinned files: missing or tampered
-	for rel, expected := range raw.FileHashes {
+	for rel, expected := range fileHashes {
 		normalizedRel := filepath.FromSlash(rel)
 		// Reject absolute keys in metadata (e.g. "/etc/passwd").
 		// file_hashes must always be skill-relative paths.
@@ -1733,7 +1725,7 @@ func checkContentIntegrity(skillPath string, cache map[string][]byte, allFiles m
 	if allFiles != nil {
 		// Use pre-collected file set from the main walk (no second walk needed).
 		for relPath := range allFiles {
-			if _, ok := raw.FileHashes[relPath]; !ok {
+			if _, ok := fileHashes[relPath]; !ok {
 				findings = append(findings, Finding{
 					Severity:   SeverityLow,
 					Pattern:    "content-unexpected",
@@ -1767,7 +1759,7 @@ func checkContentIntegrity(skillPath string, cache map[string][]byte, allFiles m
 				return nil
 			}
 			normalized := filepath.ToSlash(rel)
-			if _, ok := raw.FileHashes[normalized]; !ok {
+			if _, ok := fileHashes[normalized]; !ok {
 				findings = append(findings, Finding{
 					Severity:   SeverityLow,
 					Pattern:    "content-unexpected",

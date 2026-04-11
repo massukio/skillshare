@@ -44,6 +44,9 @@ type Source struct {
 	Path     string // Local path (empty for git)
 	Name     string // Derived skill name
 	Branch   string // Git branch to clone from (empty = remote default)
+	// ExplicitSkill is true when the user pointed directly at a SKILL.md file.
+	// That intent should resolve to exactly one skill, not a pack/discovery view.
+	ExplicitSkill bool
 }
 
 // GitHub URL pattern: github.com/owner/repo[/path/to/subdir]
@@ -218,7 +221,7 @@ func parseGitHub(matches []string, source *Source) (*Source, error) {
 
 	// Handle GitHub web URL format: /tree/{branch}/path or /blob/{branch}/path
 	// Strip the tree/branch or blob/branch prefix to get the actual subdir
-	subdir = stripGitHubBranchPrefix(subdir)
+	subdir, source.ExplicitSkill = stripGitHubBranchPrefix(subdir)
 
 	// Normalize "." subdir (explicit root) to empty string
 	if subdir == "." {
@@ -239,10 +242,12 @@ func parseGitHub(matches []string, source *Source) (*Source, error) {
 	return source, nil
 }
 
-// stripGitHubBranchPrefix removes tree/{branch}/ or blob/{branch}/ from GitHub web URLs
-func stripGitHubBranchPrefix(subdir string) string {
+// stripGitHubBranchPrefix removes tree/{branch}/ or blob/{branch}/ from GitHub web URLs.
+// When a blob/ URL points directly at a SKILL.md file, the containing directory is
+// used instead so the resulting subdir represents a skill (not a literal file name).
+func stripGitHubBranchPrefix(subdir string) (string, bool) {
 	if subdir == "" {
-		return ""
+		return "", false
 	}
 
 	parts := strings.SplitN(subdir, "/", 3)
@@ -251,14 +256,32 @@ func stripGitHubBranchPrefix(subdir string) string {
 		// parts[0] = "tree" or "blob"
 		// parts[1] = branch name (e.g., "main", "master", "v1.0")
 		// parts[2] = actual path (if exists)
+		isBlob := parts[0] == "blob"
 		if len(parts) == 3 {
-			return parts[2]
+			return trimSkillFileSuffix(parts[2], isBlob)
 		}
 		// Only tree/branch, no actual subdir
-		return ""
+		return "", false
 	}
 
-	return subdir
+	return subdir, false
+}
+
+// trimSkillFileSuffix strips a trailing SKILL.md segment from a blob URL path so
+// the resulting subdir is the containing directory of the skill. Non-blob URLs
+// and paths that do not end in SKILL.md are returned unchanged.
+func trimSkillFileSuffix(path string, isBlob bool) (string, bool) {
+	if !isBlob {
+		return path, false
+	}
+	if !strings.EqualFold(filepath.Base(path), "SKILL.md") {
+		return path, false
+	}
+	parent := filepath.ToSlash(filepath.Dir(path))
+	if parent == "." {
+		return "", true
+	}
+	return parent, true
 }
 
 func parseGitSSH(matches []string, source *Source) (*Source, error) {
@@ -380,7 +403,7 @@ func parseGitHTTPS(matches []string, source *Source, opts ParseOptions) (*Source
 	}
 
 	// Strip platform-specific branch prefixes from web URLs
-	subdir = stripGitBranchPrefix(host, subdir)
+	subdir, source.ExplicitSkill = stripGitBranchPrefix(host, subdir)
 
 	// Normalize "." subdir (explicit root) to empty string
 	if subdir == "." {
@@ -419,26 +442,28 @@ func isGitLabHost(host string, extraHosts []string) bool {
 // stripGitBranchPrefix removes platform-specific branch path segments from web URLs.
 // Bitbucket: src/{branch}/path → path
 // GitLab:    -/tree/{branch}/path → path, -/blob/{branch}/path → path
-func stripGitBranchPrefix(host, subdir string) string {
+func stripGitBranchPrefix(host, subdir string) (string, bool) {
 	if subdir == "" {
-		return ""
+		return "", false
 	}
 
 	subdir = strings.TrimRight(subdir, "/")
 	parts := strings.SplitN(subdir, "/", 3)
 
-	// Bitbucket: src/{branch}/path
+	// Bitbucket: src/{branch}/path — there is no separate blob marker, so we
+	// best-effort treat a trailing SKILL.md the same as a blob URL.
 	if strings.Contains(host, "bitbucket") && len(parts) >= 2 && parts[0] == "src" {
 		if len(parts) == 3 {
-			return parts[2]
+			return trimSkillFileSuffix(parts[2], true)
 		}
-		return ""
+		return "", false
 	}
 
 	// GitLab: -/tree/{branch}/path or -/blob/{branch}/path
 	if parts[0] == "-" && len(parts) >= 2 {
 		rest := strings.SplitN(parts[1], "/", 2)
 		if rest[0] == "tree" || rest[0] == "blob" {
+			isBlob := rest[0] == "blob"
 			// subdir is "-/tree/{branch}/path" or "-/blob/{branch}/path"
 			// After SplitN(subdir, "/", 3): parts = ["-", "tree", "{branch}/path"]
 			// Need to further split parts[2] to get past branch
@@ -446,19 +471,24 @@ func stripGitBranchPrefix(host, subdir string) string {
 				inner := strings.SplitN(parts[2], "/", 2)
 				// inner[0] = branch, inner[1] = actual path
 				if len(inner) == 2 {
-					return inner[1]
+					return trimSkillFileSuffix(inner[1], isBlob)
 				}
 			}
-			return ""
+			return "", false
 		}
 	}
 
-	return subdir
+	return subdir, false
 }
 
 // HasSubdir returns true if this source requires subdirectory extraction
 func (s *Source) HasSubdir() bool {
 	return s.Subdir != ""
+}
+
+// TargetsExplicitSkill reports whether the user pointed directly at a SKILL.md file.
+func (s *Source) TargetsExplicitSkill() bool {
+	return s != nil && s.ExplicitSkill
 }
 
 // IsGit returns true if this source requires git clone

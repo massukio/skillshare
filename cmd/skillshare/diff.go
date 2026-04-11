@@ -45,6 +45,7 @@ type diffJSONTarget struct {
 type diffJSONItem struct {
 	Action string `json:"action"`
 	Name   string `json:"name"`
+	Kind   string `json:"kind,omitempty"` // "skill" or "agent"
 	Reason string `json:"reason"`
 	IsSync bool   `json:"is_sync"`
 }
@@ -71,6 +72,9 @@ func cmdDiff(args []string) error {
 	}
 
 	applyModeLabel(mode)
+
+	// Extract kind filter (e.g. "skillshare diff agents").
+	kind, rest := parseKindArg(rest)
 
 	scope := "global"
 	cfgPath := config.ConfigPath()
@@ -104,9 +108,9 @@ func cmdDiff(args []string) error {
 
 	var cmdErr error
 	if mode == modeProject {
-		cmdErr = cmdDiffProject(cwd, targetName, opts, start)
+		cmdErr = cmdDiffProject(cwd, targetName, kind, opts, start)
 	} else {
-		cmdErr = cmdDiffGlobal(targetName, opts, start)
+		cmdErr = cmdDiffGlobal(targetName, kind, opts, start)
 	}
 	logDiffOp(cfgPath, targetName, scope, 0, start, cmdErr)
 	return cmdErr
@@ -146,6 +150,7 @@ type targetDiffResult struct {
 type copyDiffEntry struct {
 	action string // "add", "modify", "remove"
 	name   string
+	kind   string // "skill" or "agent" (empty defaults to "skill")
 	reason string
 	isSync bool            // true = needs sync, false = local-only
 	files  []fileDiffEntry // file-level diffs (nil until populated)
@@ -357,10 +362,15 @@ func (dp *diffProgress) stop() {
 	}
 }
 
-func cmdDiffGlobal(targetName string, opts diffRenderOpts, start time.Time) error {
+func cmdDiffGlobal(targetName string, kind resourceKindFilter, opts diffRenderOpts, start time.Time) error {
 	cfg, err := config.Load()
 	if err != nil {
 		return err
+	}
+
+	// Agent-only diff
+	if kind == kindAgents {
+		return diffGlobalAgents(cfg, targetName, opts, start)
 	}
 
 	var spinner *ui.Spinner
@@ -469,6 +479,9 @@ func cmdDiffGlobal(targetName string, opts diffRenderOpts, start time.Time) erro
 		})
 	}
 
+	// Merge agent diffs into skill results so they appear together
+	results = mergeAgentDiffsGlobal(cfg, results, targetName)
+
 	if opts.jsonOutput {
 		return diffOutputJSONWithExtras(results, extrasResults, start)
 	}
@@ -480,6 +493,20 @@ func cmdDiffGlobal(targetName string, opts diffRenderOpts, start time.Time) erro
 		renderExtrasDiffPlain(extrasResults)
 	}
 	return nil
+}
+
+func diffItemToJSON(item copyDiffEntry) diffJSONItem {
+	k := item.kind
+	if k == "" {
+		k = "skill"
+	}
+	return diffJSONItem{
+		Action: item.action,
+		Name:   item.name,
+		Kind:   k,
+		Reason: item.reason,
+		IsSync: item.isSync,
+	}
 }
 
 func diffOutputJSON(results []targetDiffResult, start time.Time) error {
@@ -496,12 +523,7 @@ func diffOutputJSON(results []targetDiffResult, start time.Time) error {
 			Exclude: r.exclude,
 		}
 		for _, item := range r.items {
-			jt.Items = append(jt.Items, diffJSONItem{
-				Action: item.action,
-				Name:   item.name,
-				Reason: item.reason,
-				IsSync: item.isSync,
-			})
+			jt.Items = append(jt.Items, diffItemToJSON(item))
 		}
 		output.Targets = append(output.Targets, jt)
 	}
@@ -528,12 +550,7 @@ func diffOutputJSONWithExtras(results []targetDiffResult, extrasResults []extraD
 			Exclude: r.exclude,
 		}
 		for _, item := range r.items {
-			jt.Items = append(jt.Items, diffJSONItem{
-				Action: item.action,
-				Name:   item.name,
-				Reason: item.reason,
-				IsSync: item.isSync,
-			})
+			jt.Items = append(jt.Items, diffItemToJSON(item))
 		}
 		o.Targets = append(o.Targets, jt)
 	}
@@ -804,7 +821,7 @@ func categorizeItems(items []copyDiffEntry) []actionCategory {
 
 	for _, item := range items {
 		switch {
-		case item.reason == "source only":
+		case item.reason == "source only" || item.reason == "not in target":
 			add("new", "new", "New", item.name)
 		case item.reason == "deleted from target":
 			add("restore", "new", "Restore", item.name)
@@ -814,7 +831,7 @@ func categorizeItems(items []copyDiffEntry) []actionCategory {
 			add("override", "override", "Local Override", item.name)
 		case strings.Contains(item.reason, "orphan"):
 			add("orphan", "orphan", "Orphan", item.name)
-		case item.reason == "local only" || item.reason == "not in source":
+		case item.reason == "local only" || item.reason == "not in source" || item.reason == "local file":
 			add("local", "local", "Local Only", item.name)
 		default:
 			add("warn", "warn", item.reason, item.name)
@@ -1041,7 +1058,7 @@ func pluralS(n int) string {
 }
 
 func printDiffHelp() {
-	fmt.Println(`Usage: skillshare diff [target] [options]
+	fmt.Println(`Usage: skillshare diff [agents|all] [target] [options]
 
 Show differences between source skills and target directories.
 Previews what 'sync' would change without modifying anything.
@@ -1063,5 +1080,6 @@ Examples:
   skillshare diff claude               # Diff a single target
   skillshare diff -p                   # Diff project-mode targets
   skillshare diff --stat               # Show file-level stat
-  skillshare diff --patch              # Show full text diff`)
+  skillshare diff --patch              # Show full text diff
+  skillshare diff agents               # Diff agents targets only`)
 }

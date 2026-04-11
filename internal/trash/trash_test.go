@@ -260,6 +260,22 @@ func TestList_NestedEntries(t *testing.T) {
 	}
 }
 
+func TestList_SkipsReservedAgentTrashSubtree(t *testing.T) {
+	tmpDir := t.TempDir()
+	trashBase := filepath.Join(tmpDir, "trash")
+
+	os.MkdirAll(filepath.Join(trashBase, "skill-a_2026-01-01_10-00-00"), 0755)
+	os.MkdirAll(filepath.Join(trashBase, "agents", "demo", "code-archaeologist_2026-01-02_10-00-00"), 0755)
+
+	items := List(trashBase)
+	if len(items) != 1 {
+		t.Fatalf("expected only skill trash items, got %d", len(items))
+	}
+	if items[0].Name != "skill-a" {
+		t.Fatalf("expected only skill-a, got %q", items[0].Name)
+	}
+}
+
 func TestFindByName_NestedName(t *testing.T) {
 	tmpDir := t.TempDir()
 	trashBase := filepath.Join(tmpDir, "trash")
@@ -272,6 +288,17 @@ func TestFindByName_NestedName(t *testing.T) {
 	}
 	if entry.Name != "org/_team-skills" {
 		t.Errorf("expected Name 'org/_team-skills', got %q", entry.Name)
+	}
+}
+
+func TestFindByName_SkipsReservedAgentTrashSubtree(t *testing.T) {
+	tmpDir := t.TempDir()
+	trashBase := filepath.Join(tmpDir, "trash")
+
+	os.MkdirAll(filepath.Join(trashBase, "agents", "demo", "code-archaeologist_2026-01-01_10-00-00"), 0755)
+
+	if entry := FindByName(trashBase, "agents/demo/code-archaeologist"); entry != nil {
+		t.Fatalf("expected reserved agent subtree to be ignored, got %q", entry.Name)
 	}
 }
 

@@ -132,6 +132,15 @@ func (tc *TargetConfig) EnsureSkills() *ResourceTargetConfig {
 	return tc.Skills
 }
 
+// EnsureAgents returns the Agents sub-key, creating it if nil.
+// Use this before writing to Agents fields.
+func (tc *TargetConfig) EnsureAgents() *ResourceTargetConfig {
+	if tc.Agents == nil {
+		tc.Agents = &ResourceTargetConfig{}
+	}
+	return tc.Agents
+}
+
 // migrateTargetConfigs moves legacy flat fields into skills: sub-key.
 // Returns true if any target was migrated.
 func migrateTargetConfigs(targets map[string]TargetConfig) bool {
@@ -216,6 +225,7 @@ type ExtraConfig struct {
 // Config holds the application configuration
 type Config struct {
 	Source       string                  `yaml:"source"`
+	AgentsSource string                  `yaml:"agents_source,omitempty"`
 	ExtrasSource string                  `yaml:"extras_source,omitempty"`
 	Mode         string                  `yaml:"mode,omitempty"` // default mode: merge
 	TargetNaming string                  `yaml:"target_naming,omitempty"`
@@ -231,6 +241,32 @@ type Config struct {
 	// RegistryDir is the resolved directory for registry.yaml (cached SourceRoot result).
 	// Set during Load(), not serialized to YAML.
 	RegistryDir string `yaml:"-"`
+}
+
+// EffectiveAgentsSource returns the agents source directory.
+// Defaults to <BaseDir>/agents if not explicitly configured.
+func (c *Config) EffectiveAgentsSource() string {
+	if c.AgentsSource != "" {
+		return ExpandPath(c.AgentsSource)
+	}
+	return filepath.Join(BaseDir(), "agents")
+}
+
+// HasAgentTarget reports whether any configured target has an agents path,
+// either from the user's config agents: sub-key or from the built-in defaults.
+func (c *Config) HasAgentTarget() bool {
+	builtinAgents := DefaultAgentTargets()
+	for name, tc := range c.Targets {
+		// Check user config agents: sub-key
+		if ac := tc.AgentsConfig(); ac.Path != "" {
+			return true
+		}
+		// Check built-in defaults
+		if _, ok := builtinAgents[name]; ok {
+			return true
+		}
+	}
+	return false
 }
 
 // EffectiveGitLabHosts returns GitLabHosts merged with SKILLSHARE_GITLAB_HOSTS env var.

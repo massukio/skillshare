@@ -9,13 +9,13 @@ import (
 	"strings"
 	"testing"
 
-	"skillshare/internal/config"
+	"skillshare/internal/install"
 	"skillshare/internal/trash"
 )
 
 func TestHandleListSkills_Empty(t *testing.T) {
 	s, _ := newTestServer(t)
-	req := httptest.NewRequest(http.MethodGet, "/api/skills", nil)
+	req := httptest.NewRequest(http.MethodGet, "/api/resources", nil)
 	rr := httptest.NewRecorder()
 	s.handler.ServeHTTP(rr, req)
 
@@ -24,11 +24,11 @@ func TestHandleListSkills_Empty(t *testing.T) {
 	}
 
 	var resp struct {
-		Skills []any `json:"skills"`
+		Resources []any `json:"resources"`
 	}
 	json.Unmarshal(rr.Body.Bytes(), &resp)
-	if len(resp.Skills) != 0 {
-		t.Errorf("expected 0 skills, got %d", len(resp.Skills))
+	if len(resp.Resources) != 0 {
+		t.Errorf("expected 0 resources, got %d", len(resp.Resources))
 	}
 }
 
@@ -37,7 +37,7 @@ func TestHandleListSkills_WithSkills(t *testing.T) {
 	addSkill(t, src, "alpha")
 	addSkill(t, src, "beta")
 
-	req := httptest.NewRequest(http.MethodGet, "/api/skills", nil)
+	req := httptest.NewRequest(http.MethodGet, "/api/resources", nil)
 	rr := httptest.NewRecorder()
 	s.handler.ServeHTTP(rr, req)
 
@@ -46,11 +46,11 @@ func TestHandleListSkills_WithSkills(t *testing.T) {
 	}
 
 	var resp struct {
-		Skills []map[string]any `json:"skills"`
+		Resources []map[string]any `json:"resources"`
 	}
 	json.Unmarshal(rr.Body.Bytes(), &resp)
-	if len(resp.Skills) != 2 {
-		t.Errorf("expected 2 skills, got %d", len(resp.Skills))
+	if len(resp.Resources) != 2 {
+		t.Errorf("expected 2 resources, got %d", len(resp.Resources))
 	}
 }
 
@@ -58,7 +58,7 @@ func TestHandleGetSkill_Found(t *testing.T) {
 	s, src := newTestServer(t)
 	addSkill(t, src, "my-skill")
 
-	req := httptest.NewRequest(http.MethodGet, "/api/skills/my-skill", nil)
+	req := httptest.NewRequest(http.MethodGet, "/api/resources/my-skill", nil)
 	rr := httptest.NewRecorder()
 	s.handler.ServeHTTP(rr, req)
 
@@ -68,15 +68,15 @@ func TestHandleGetSkill_Found(t *testing.T) {
 
 	var resp map[string]any
 	json.Unmarshal(rr.Body.Bytes(), &resp)
-	skill := resp["skill"].(map[string]any)
-	if skill["flatName"] != "my-skill" {
-		t.Errorf("expected flatName 'my-skill', got %v", skill["flatName"])
+	res := resp["resource"].(map[string]any)
+	if res["flatName"] != "my-skill" {
+		t.Errorf("expected flatName 'my-skill', got %v", res["flatName"])
 	}
 }
 
 func TestHandleGetSkill_NotFound(t *testing.T) {
 	s, _ := newTestServer(t)
-	req := httptest.NewRequest(http.MethodGet, "/api/skills/nonexistent", nil)
+	req := httptest.NewRequest(http.MethodGet, "/api/resources/nonexistent", nil)
 	rr := httptest.NewRecorder()
 	s.handler.ServeHTTP(rr, req)
 
@@ -93,7 +93,7 @@ func TestHandleGetSkillFile_PathTraversal(t *testing.T) {
 	// to bypass mux and call the handler directly with a crafted PathValue.
 	// Instead, test that a valid-looking but still-traversal path is rejected.
 	// The handler checks strings.Contains(fp, "..").
-	req := httptest.NewRequest(http.MethodGet, "/api/skills/my-skill/files/sub%2F..%2F..%2Fetc%2Fpasswd", nil)
+	req := httptest.NewRequest(http.MethodGet, "/api/resources/my-skill/files/sub%2F..%2F..%2Fetc%2Fpasswd", nil)
 	rr := httptest.NewRecorder()
 	s.mux.ServeHTTP(rr, req)
 
@@ -178,14 +178,11 @@ func TestHandleUninstallRepo_PrunesRegistry(t *testing.T) {
 	addTrackedRepo(t, src, "_team-skills")
 	addSkill(t, src, "unrelated-skill") // must exist on disk to survive reconcile
 
-	// Seed registry with entries belonging to this repo
-	s.registry = &config.Registry{
-		Skills: []config.SkillEntry{
-			{Name: "vue-best-practices", Group: "team-skills", Tracked: true},
-			{Name: "react-patterns", Group: "team-skills", Tracked: true},
-			{Name: "unrelated-skill", Group: ""},
-		},
-	}
+	// Seed store with entries belonging to this repo
+	s.skillsStore = install.NewMetadataStore()
+	s.skillsStore.Set("team-skills/vue-best-practices", &install.MetadataEntry{Group: "team-skills", Tracked: true})
+	s.skillsStore.Set("team-skills/react-patterns", &install.MetadataEntry{Group: "team-skills", Tracked: true})
+	s.skillsStore.Set("unrelated-skill", &install.MetadataEntry{})
 
 	req := httptest.NewRequest(http.MethodDelete, "/api/repos/_team-skills", nil)
 	req.SetPathValue("name", "_team-skills")
@@ -196,10 +193,11 @@ func TestHandleUninstallRepo_PrunesRegistry(t *testing.T) {
 		t.Fatalf("expected 200, got %d: %s", rr.Code, rr.Body.String())
 	}
 
-	// Registry should not contain any team-skills entries
-	for _, entry := range s.registry.Skills {
-		if entry.Group == "team-skills" {
-			t.Fatalf("expected team-skills entries to be pruned, but found %q", entry.Name)
+	// Store should not contain any team-skills entries
+	for _, name := range s.skillsStore.List() {
+		entry := s.skillsStore.Get(name)
+		if entry != nil && entry.Group == "team-skills" {
+			t.Fatalf("expected team-skills entries to be pruned, but found %q", name)
 		}
 	}
 }
@@ -209,14 +207,11 @@ func TestHandleUninstallRepo_NestedPruneDoesNotAffectSibling(t *testing.T) {
 	addTrackedRepo(t, src, filepath.Join("org", "_team-skills"))
 	addTrackedRepo(t, src, filepath.Join("dept", "_team-skills"))
 
-	// Seed registry: entries from both nested repos + an exact-group entry
-	s.registry = &config.Registry{
-		Skills: []config.SkillEntry{
-			{Name: "vue", Group: "org/_team-skills", Tracked: true},
-			{Name: "react", Group: "dept/_team-skills", Tracked: true},
-			{Name: "unrelated", Group: ""},
-		},
-	}
+	// Seed store: entries from both nested repos + an exact-group entry
+	s.skillsStore = install.NewMetadataStore()
+	s.skillsStore.Set("org/_team-skills/vue", &install.MetadataEntry{Group: "org/_team-skills", Tracked: true})
+	s.skillsStore.Set("dept/_team-skills/react", &install.MetadataEntry{Group: "dept/_team-skills", Tracked: true})
+	s.skillsStore.Set("unrelated", &install.MetadataEntry{})
 
 	req := httptest.NewRequest(http.MethodDelete, "/api/repos/org/_team-skills", nil)
 	req.SetPathValue("name", "org/_team-skills")
@@ -228,16 +223,18 @@ func TestHandleUninstallRepo_NestedPruneDoesNotAffectSibling(t *testing.T) {
 	}
 
 	// org/_team-skills entries should be pruned
-	for _, entry := range s.registry.Skills {
-		if entry.Group == "org/_team-skills" {
-			t.Fatalf("expected org/_team-skills entries to be pruned, but found %q", entry.Name)
+	for _, name := range s.skillsStore.List() {
+		entry := s.skillsStore.Get(name)
+		if entry != nil && entry.Group == "org/_team-skills" {
+			t.Fatalf("expected org/_team-skills entries to be pruned, but found %q", name)
 		}
 	}
 
 	// dept/_team-skills entries must survive
 	var found bool
-	for _, entry := range s.registry.Skills {
-		if entry.Group == "dept/_team-skills" {
+	for _, name := range s.skillsStore.List() {
+		entry := s.skillsStore.Get(name)
+		if entry != nil && entry.Group == "dept/_team-skills" {
 			found = true
 			break
 		}
@@ -266,11 +263,8 @@ func TestHandleUninstallRepo_ProjectMode_GitignorePath(t *testing.T) {
 	gitignorePath := filepath.Join(gitignoreDir, ".gitignore")
 	os.WriteFile(gitignorePath, []byte("# BEGIN SKILLSHARE MANAGED - DO NOT EDIT\nskills/_team-skills/\n# END SKILLSHARE MANAGED\n"), 0644)
 
-	s.registry = &config.Registry{
-		Skills: []config.SkillEntry{
-			{Name: "_team-skills", Tracked: true},
-		},
-	}
+	s.skillsStore = install.NewMetadataStore()
+	s.skillsStore.Set("_team-skills", &install.MetadataEntry{Tracked: true})
 
 	req := httptest.NewRequest(http.MethodDelete, "/api/repos/_team-skills", nil)
 	req.SetPathValue("name", "_team-skills")
@@ -376,14 +370,11 @@ func TestHandleUninstallRepo_PrunesNestedFullPathGroup(t *testing.T) {
 	s, src := newTestServer(t)
 	addTrackedRepo(t, src, filepath.Join("org", "_team-skills"))
 
-	// Registry with entries using full nested path as Group (new reconcile format)
-	s.registry = &config.Registry{
-		Skills: []config.SkillEntry{
-			{Name: "vue", Group: "org/_team-skills", Tracked: true},
-			{Name: "react", Group: "org/_team-skills", Tracked: true},
-			{Name: "unrelated", Group: ""},
-		},
-	}
+	// Store with entries using full nested path as Group (new reconcile format)
+	s.skillsStore = install.NewMetadataStore()
+	s.skillsStore.Set("org/_team-skills/vue", &install.MetadataEntry{Group: "org/_team-skills", Tracked: true})
+	s.skillsStore.Set("org/_team-skills/react", &install.MetadataEntry{Group: "org/_team-skills", Tracked: true})
+	s.skillsStore.Set("unrelated", &install.MetadataEntry{})
 
 	req := httptest.NewRequest(http.MethodDelete, "/api/repos/org/_team-skills", nil)
 	req.SetPathValue("name", "org/_team-skills")
@@ -395,11 +386,12 @@ func TestHandleUninstallRepo_PrunesNestedFullPathGroup(t *testing.T) {
 	}
 
 	// All org/_team-skills entries should be pruned, unrelated survives
-	if len(s.registry.Skills) != 1 {
-		t.Fatalf("expected 1 surviving entry, got %d", len(s.registry.Skills))
+	names := s.skillsStore.List()
+	if len(names) != 1 {
+		t.Fatalf("expected 1 surviving entry, got %d", len(names))
 	}
-	if s.registry.Skills[0].Name != "unrelated" {
-		t.Fatalf("expected 'unrelated' to survive, got %q", s.registry.Skills[0].Name)
+	if !s.skillsStore.Has("unrelated") {
+		t.Fatalf("expected 'unrelated' to survive")
 	}
 }
 
@@ -407,14 +399,11 @@ func TestHandleUninstallRepo_PrunesNestedMembersByPrefix(t *testing.T) {
 	s, src := newTestServer(t)
 	addTrackedRepo(t, src, filepath.Join("org", "_team-skills"))
 
-	// Registry with the repo's own entry + a sub-skill using FullName prefix
-	s.registry = &config.Registry{
-		Skills: []config.SkillEntry{
-			{Name: "org/_team-skills", Group: "", Tracked: true},          // repo entry
-			{Name: "sub-skill", Group: "org/_team-skills", Tracked: true}, // member
-			{Name: "standalone", Group: ""},
-		},
-	}
+	// Store with the repo's own entry + a sub-skill using name prefix
+	s.skillsStore = install.NewMetadataStore()
+	s.skillsStore.Set("org/_team-skills", &install.MetadataEntry{Tracked: true})                                      // repo entry
+	s.skillsStore.Set("org/_team-skills/sub-skill", &install.MetadataEntry{Group: "org/_team-skills", Tracked: true}) // member
+	s.skillsStore.Set("standalone", &install.MetadataEntry{})
 
 	req := httptest.NewRequest(http.MethodDelete, "/api/repos/org/_team-skills", nil)
 	req.SetPathValue("name", "org/_team-skills")
@@ -425,10 +414,11 @@ func TestHandleUninstallRepo_PrunesNestedMembersByPrefix(t *testing.T) {
 		t.Fatalf("expected 200, got %d: %s", rr.Code, rr.Body.String())
 	}
 
-	if len(s.registry.Skills) != 1 {
-		t.Fatalf("expected 1 surviving entry, got %d", len(s.registry.Skills))
+	names := s.skillsStore.List()
+	if len(names) != 1 {
+		t.Fatalf("expected 1 surviving entry, got %d", len(names))
 	}
-	if s.registry.Skills[0].Name != "standalone" {
-		t.Fatalf("expected 'standalone' to survive, got %q", s.registry.Skills[0].Name)
+	if !s.skillsStore.Has("standalone") {
+		t.Fatalf("expected 'standalone' to survive")
 	}
 }

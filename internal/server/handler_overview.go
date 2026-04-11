@@ -8,6 +8,7 @@ import (
 
 	"skillshare/internal/git"
 	"skillshare/internal/install"
+	"skillshare/internal/resource"
 	"skillshare/internal/sync"
 	"skillshare/internal/utils"
 	versioncheck "skillshare/internal/version"
@@ -23,6 +24,11 @@ func (s *Server) handleOverview(w http.ResponseWriter, r *http.Request) {
 	// Snapshot config under RLock, then release before I/O.
 	s.mu.RLock()
 	source := s.cfg.Source
+	agentsSource := s.agentsSource()
+	extrasSource := s.cfg.ExtrasSource
+	if s.IsProjectMode() {
+		extrasSource = filepath.Join(s.projectRoot, ".skillshare", "extras")
+	}
 	cfgMode := s.cfg.Mode
 	targetCount := len(s.cfg.Targets)
 	projectRoot := s.projectRoot
@@ -54,15 +60,30 @@ func (s *Server) handleOverview(w http.ResponseWriter, r *http.Request) {
 	// Tracked repos
 	trackedRepos := buildTrackedRepos(source, skills)
 
+	// Count agents
+	agentCount := 0
+	if agentsSource != "" {
+		if agents, discoverErr := (resource.AgentKind{}).Discover(agentsSource); discoverErr == nil {
+			agentCount = len(agents)
+		}
+	}
+
 	resp := map[string]any{
 		"source":        source,
 		"skillCount":    len(skills),
+		"agentCount":    agentCount,
 		"topLevelCount": topLevelCount,
 		"targetCount":   targetCount,
 		"mode":          mode,
 		"version":       versioncheck.Version,
 		"trackedRepos":  trackedRepos,
 		"isProjectMode": isProjectMode,
+	}
+	if agentsSource != "" {
+		resp["agentsSource"] = agentsSource
+	}
+	if extrasSource != "" {
+		resp["extrasSource"] = extrasSource
 	}
 	if isProjectMode {
 		resp["projectRoot"] = projectRoot

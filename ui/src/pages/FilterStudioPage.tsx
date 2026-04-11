@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback, useRef, useMemo, memo } from 'react';
-import { useParams, useNavigate } from 'react-router-dom';
+import { useParams, useNavigate, useSearchParams } from 'react-router-dom';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { Virtuoso } from 'react-virtuoso';
 import { Filter, Check, X, Info, PackageOpen, Search } from 'lucide-react';
@@ -13,13 +13,21 @@ import Spinner from '../components/Spinner';
 import PageHeader from '../components/PageHeader';
 import EmptyState from '../components/EmptyState';
 import FilterTagInput from '../components/FilterTagInput';
+import KindBadge from '../components/KindBadge';
 import { radius } from '../design';
+import { formatPreviewResourceName } from '../lib/resourceNames';
+
+type FilterKind = 'skill' | 'agent';
 
 export default function FilterStudioPage() {
   const { name } = useParams<{ name: string }>();
+  const [searchParams] = useSearchParams();
   const navigate = useNavigate();
   const queryClient = useQueryClient();
   const { toast } = useToast();
+
+  const kind: FilterKind = searchParams.get('kind') === 'agent' ? 'agent' : 'skill';
+  const kindLabel = kind === 'agent' ? 'agents' : 'skills';
 
   // Load current target config
   const targetsQuery = useQuery({
@@ -33,7 +41,7 @@ export default function FilterStudioPage() {
     [targetsQuery.data, name],
   );
 
-  // Draft filter state
+  // Draft filter state for active kind
   const [include, setInclude] = useState<string[]>([]);
   const [exclude, setExclude] = useState<string[]>([]);
   const [initialized, setInitialized] = useState(false);
@@ -41,11 +49,16 @@ export default function FilterStudioPage() {
   // Initialize draft from target config once loaded
   useEffect(() => {
     if (target && !initialized) {
-      setInclude(target.include ?? []);
-      setExclude(target.exclude ?? []);
+      if (kind === 'agent') {
+        setInclude(target.agentInclude ?? []);
+        setExclude(target.agentExclude ?? []);
+      } else {
+        setInclude(target.include ?? []);
+        setExclude(target.exclude ?? []);
+      }
       setInitialized(true);
     }
-  }, [target, initialized]);
+  }, [target, initialized, kind]);
 
   // Debounced preview
   const [preview, setPreview] = useState<SyncMatrixEntry[]>([]);
@@ -57,7 +70,11 @@ export default function FilterStudioPage() {
       if (!name) return;
       setPreviewLoading(true);
       try {
-        const res = await api.previewSyncMatrix(name, inc, exc);
+        const skillInc = kind === 'skill' ? inc : [];
+        const skillExc = kind === 'skill' ? exc : [];
+        const agentInc = kind === 'agent' ? inc : [];
+        const agentExc = kind === 'agent' ? exc : [];
+        const res = await api.previewSyncMatrix(name, skillInc, skillExc, agentInc, agentExc);
         setPreview(res.entries);
       } catch {
         // silently ignore preview errors
@@ -65,7 +82,7 @@ export default function FilterStudioPage() {
         setPreviewLoading(false);
       }
     },
-    [name],
+    [name, kind],
   );
 
   // Trigger debounced preview on filter change
@@ -76,16 +93,22 @@ export default function FilterStudioPage() {
     return () => clearTimeout(debounceRef.current);
   }, [include, exclude, initialized, fetchPreview]);
 
+  // Filter preview entries to only show the active kind
+  const kindPreview = useMemo(() => {
+    if (kind === 'agent') return preview.filter((e) => e.kind === 'agent');
+    return preview.filter((e) => e.kind !== 'agent');
+  }, [preview, kind]);
+
   // Unsaved changes detection
   const hasChanges = useMemo(() => {
     if (!target) return false;
-    const savedInc = target.include ?? [];
-    const savedExc = target.exclude ?? [];
+    const savedInc = kind === 'agent' ? (target.agentInclude ?? []) : (target.include ?? []);
+    const savedExc = kind === 'agent' ? (target.agentExclude ?? []) : (target.exclude ?? []);
     return (
       JSON.stringify(include) !== JSON.stringify(savedInc) ||
       JSON.stringify(exclude) !== JSON.stringify(savedExc)
     );
-  }, [target, include, exclude]);
+  }, [target, include, exclude, kind]);
 
   // Save handler
   const [saving, setSaving] = useState(false);
@@ -94,8 +117,11 @@ export default function FilterStudioPage() {
     if (!name) return;
     setSaving(true);
     try {
-      await api.updateTarget(name, { include, exclude });
-      toast(`Filters for "${name}" saved.`, 'success');
+      const payload = kind === 'agent'
+        ? { agent_include: include, agent_exclude: exclude }
+        : { include, exclude };
+      await api.updateTarget(name, payload);
+      toast(`${kind === 'agent' ? 'Agent' : 'Skill'} filters for "${name}" saved.`, 'success');
       queryClient.invalidateQueries({ queryKey: queryKeys.targets.all });
       queryClient.invalidateQueries({ queryKey: queryKeys.syncMatrix() });
       if (goBack) navigate('/targets');
@@ -107,33 +133,34 @@ export default function FilterStudioPage() {
   };
 
   // Click-to-toggle on preview items
-  const handleToggleSkill = (entry: SyncMatrixEntry) => {
+  const handleToggle = (entry: SyncMatrixEntry) => {
     if (entry.status === 'skill_target_mismatch') return;
-    const skill = entry.skill;
+    const item = entry.skill;
     if (entry.status === 'synced') {
-      // Exclude this skill: add to exclude, remove from include
-      setExclude((prev) => prev.includes(skill) ? prev : [...prev, skill]);
-      setInclude((prev) => prev.filter((p) => p !== skill));
+      setExclude((prev) => prev.includes(item) ? prev : [...prev, item]);
+      setInclude((prev) => prev.filter((p) => p !== item));
     } else {
-      // Include this skill: add to include, remove from exclude
-      setInclude((prev) => prev.includes(skill) ? prev : [...prev, skill]);
-      setExclude((prev) => prev.filter((p) => p !== skill));
+      setInclude((prev) => prev.includes(item) ? prev : [...prev, item]);
+      setExclude((prev) => prev.filter((p) => p !== item));
     }
   };
 
   // Preview search filter
   const [previewSearch, setPreviewSearch] = useState('');
   const filteredPreview = useMemo(() => {
-    if (!previewSearch) return preview;
+    if (!previewSearch) return kindPreview;
     const q = previewSearch.toLowerCase();
-    return preview.filter((e) => e.skill.toLowerCase().includes(q));
-  }, [preview, previewSearch]);
+    return kindPreview.filter((e) => {
+      const displayName = formatPreviewResourceName(e.skill, kind);
+      return e.skill.toLowerCase().includes(q) || displayName.toLowerCase().includes(q);
+    });
+  }, [kindPreview, previewSearch, kind]);
 
-  // Summary counts (always from full preview, not filtered)
+  // Summary counts (from kind-filtered preview, not search-filtered)
   const { syncedCount, totalCount } = useMemo(() => ({
-    syncedCount: preview.filter((e) => e.status === 'synced').length,
-    totalCount: preview.length,
-  }), [preview]);
+    syncedCount: kindPreview.filter((e) => e.status === 'synced').length,
+    totalCount: kindPreview.length,
+  }), [kindPreview]);
 
   if (targetsQuery.isPending) {
     return (
@@ -165,7 +192,12 @@ export default function FilterStudioPage() {
       <PageHeader
         icon={<Filter size={24} strokeWidth={2.5} />}
         title="Filter Studio"
-        subtitle={`Route specific skills to ${name}. Use glob patterns like frontend*, _team__*.`}
+        subtitle={
+          <span className="inline-flex items-center gap-2">
+            <KindBadge kind={kind} />
+            <span>Route specific {kindLabel} to <strong>{name}</strong></span>
+          </span>
+        }
         backTo="/targets"
         actions={
           <>
@@ -201,7 +233,9 @@ export default function FilterStudioPage() {
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
         {/* Left column — Filter Rules */}
         <Card>
-          <h3 className="font-bold text-pencil mb-4">Filter Rules</h3>
+          <h3 className="font-bold text-pencil mb-4">
+            {kind === 'agent' ? 'Agent' : 'Skill'} Filter Rules
+          </h3>
           <div className="space-y-4">
             <FilterTagInput
               label="Include patterns"
@@ -228,11 +262,11 @@ export default function FilterStudioPage() {
             {previewLoading && <Spinner size="sm" />}
           </div>
 
-          {preview.length === 0 && !previewLoading ? (
+          {kindPreview.length === 0 && !previewLoading ? (
             <EmptyState
               icon={PackageOpen}
-              title="No skills to preview"
-              description="Add some skills to your source first."
+              title={`No ${kindLabel} to preview`}
+              description={`Add some ${kindLabel} to your source first.`}
             />
           ) : (
             <>
@@ -243,7 +277,7 @@ export default function FilterStudioPage() {
                   type="text"
                   value={previewSearch}
                   onChange={(e) => setPreviewSearch(e.target.value)}
-                  placeholder="Filter skills..."
+                  placeholder={`Filter ${kindLabel}...`}
                   className="w-full pl-8 pr-3 py-1.5 text-sm text-pencil bg-surface border-2 border-muted font-mono placeholder:text-muted-dark focus:border-pencil focus:outline-none"
                   style={{ borderRadius: radius.sm }}
                 />
@@ -255,7 +289,7 @@ export default function FilterStudioPage() {
               >
                 {filteredPreview.length === 0 && previewSearch ? (
                   <p className="text-sm text-pencil-light text-center py-6">
-                    No skills matching "{previewSearch}"
+                    No {kindLabel} matching &ldquo;{previewSearch}&rdquo;
                   </p>
                 ) : (
                   <Virtuoso
@@ -265,7 +299,8 @@ export default function FilterStudioPage() {
                     itemContent={(index) => (
                       <PreviewRow
                         entry={filteredPreview[index]}
-                        onClick={() => handleToggleSkill(filteredPreview[index])}
+                        kind={kind}
+                        onClick={() => handleToggle(filteredPreview[index])}
                       />
                     )}
                   />
@@ -274,7 +309,7 @@ export default function FilterStudioPage() {
 
               <p className="text-sm text-pencil-light mt-3 text-center">
                 <span className="font-bold text-success">{syncedCount}</span>
-                /{totalCount} skills will sync
+                /{totalCount} {kindLabel} will sync
                 {previewSearch && ` · showing ${filteredPreview.length}`}
               </p>
             </>
@@ -288,13 +323,17 @@ export default function FilterStudioPage() {
 /** Single preview row with status indicator and click-to-toggle */
 const PreviewRow = memo(function PreviewRow({
   entry,
+  kind,
   onClick,
 }: {
   entry: SyncMatrixEntry;
+  kind: FilterKind;
   onClick: () => void;
 }) {
   const isMismatch = entry.status === 'skill_target_mismatch';
   const clickable = !isMismatch;
+  const label = kind === 'agent' ? 'agent' : 'skill';
+  const displayName = formatPreviewResourceName(entry.skill, kind);
 
   return (
     <div
@@ -308,15 +347,15 @@ const PreviewRow = memo(function PreviewRow({
       `}
       title={
         isMismatch
-          ? `This skill declares specific targets: ${entry.reason}`
+          ? `This ${label} declares specific targets: ${entry.reason}`
           : entry.status === 'synced'
-            ? 'Click to exclude this skill'
-            : 'Click to include this skill'
+            ? `Click to exclude this ${label}`
+            : `Click to include this ${label}`
       }
     >
       <StatusIcon status={entry.status} />
       <span className="font-mono text-pencil flex-1 min-w-0 truncate">
-        {entry.skill}
+        {displayName}
       </span>
       {entry.status === 'excluded' && entry.reason && (
         <span className="text-xs text-pencil-light shrink-0">({entry.reason})</span>

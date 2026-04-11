@@ -2,73 +2,39 @@ package main
 
 import (
 	"fmt"
-	"strings"
+	"time"
 
 	"skillshare/internal/config"
+	"skillshare/internal/sync"
 	"skillshare/internal/ui"
 )
 
-func cmdCollectProject(args []string, root string) error {
-	dryRun := false
-	force := false
-	collectAll := false
-	var targetName string
-
-	for _, arg := range args {
-		switch arg {
-		case "--dry-run", "-n":
-			dryRun = true
-		case "--force", "-f":
-			force = true
-		case "--all", "-a":
-			collectAll = true
-		default:
-			if targetName == "" && !strings.HasPrefix(arg, "-") {
-				targetName = arg
-			}
-		}
-	}
+func cmdCollectProject(opts collectOptions, root string, start time.Time) (collectLogSummary, error) {
+	summary := newCollectLogSummary(kindSkills, "project", opts)
 
 	runtime, err := loadProjectRuntime(root)
 	if err != nil {
-		return err
+		return summary, collectCommandError(err, opts.jsonOutput)
 	}
 
-	targets, err := selectCollectProjectTargets(runtime, targetName, collectAll)
+	targets, err := selectCollectProjectTargets(runtime, opts.targetName, opts.collectAll, opts.jsonOutput)
 	if err != nil {
-		return err
+		return summary, collectCommandError(err, opts.jsonOutput)
 	}
 	if targets == nil {
-		return nil
+		return summary, nil
 	}
 
-	ui.Header(ui.WithModeLabel("Collect"))
-	sp := ui.StartSpinner("Scanning for local skills...")
-	allLocalSkills := collectLocalSkills(targets, runtime.sourcePath, "")
-	if len(allLocalSkills) == 0 {
-		sp.Success("No local skills found")
-		return nil
-	}
-	sp.Success(fmt.Sprintf("Found %d local skill(s)", len(allLocalSkills)))
-
-	displayLocalSkills(allLocalSkills)
-
-	if dryRun {
-		ui.Info("Dry run - no changes made")
-		return nil
-	}
-
-	if !force {
-		if !confirmCollect() {
-			ui.Info("Cancelled")
-			return nil
-		}
-	}
-
-	return executeCollect(allLocalSkills, runtime.sourcePath, dryRun, force)
+	return runCollectPlan(collectPlan{
+		kind: kindSkills, source: runtime.sourcePath,
+		scan: func(warn bool) collectResources {
+			skills := collectLocalSkills(targets, runtime.sourcePath, "", warn)
+			return toCollectResources(skills, runtime.sourcePath, skillDisplayItem, sync.PullSkills)
+		},
+	}, opts, start, "project")
 }
 
-func selectCollectProjectTargets(runtime *projectRuntime, targetName string, collectAll bool) (map[string]config.TargetConfig, error) {
+func selectCollectProjectTargets(runtime *projectRuntime, targetName string, collectAll, jsonOutput bool) (map[string]config.TargetConfig, error) {
 	if targetName != "" {
 		if t, ok := runtime.targets[targetName]; ok {
 			return map[string]config.TargetConfig{targetName: t}, nil
@@ -76,8 +42,16 @@ func selectCollectProjectTargets(runtime *projectRuntime, targetName string, col
 		return nil, fmt.Errorf("target '%s' not found in project config", targetName)
 	}
 
+	if len(runtime.targets) == 0 {
+		return runtime.targets, nil
+	}
+
 	if collectAll || len(runtime.targets) == 1 {
 		return runtime.targets, nil
+	}
+
+	if jsonOutput {
+		return nil, fmt.Errorf("multiple targets found; specify a target name or use --all")
 	}
 
 	ui.Warning("Multiple targets found. Specify a target name or use --all")

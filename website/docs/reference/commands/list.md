@@ -263,9 +263,24 @@ For more details, see [Organizing Skills with Folders](/docs/how-to/daily-tasks/
 | `✓` | Up-to-date, no local changes |
 | `!` | Has uncommitted changes |
 
+## Agent Support
+
+`skillshare list agents` filters to agents only, showing `.md` files from the agents source directory (`~/.config/skillshare/agents/` or `.skillshare/agents/`).
+
+```bash
+skillshare list agents              # List agents only
+skillshare list agents --json       # JSON output for agents
+skillshare list agents --verbose    # Detailed agent list
+```
+
+In the interactive TUI, agents display an **[A]** badge to distinguish them from skills. All TUI features (filtering, detail panel, enable/disable toggle) work the same way.
+
+Without the `agents` argument, `list` shows skills only (default behavior). See [Agents](/docs/understand/agents) for background.
+
 ## See Also
 
 - [enable / disable](/docs/reference/commands/enable) — Toggle skills without removing
 - [install](/docs/reference/commands/install) — Install skills
 - [uninstall](/docs/reference/commands/uninstall) — Remove skills
 - [status](/docs/reference/commands/status) — Show sync status
+- [Agents](/docs/understand/agents) — Agent concepts

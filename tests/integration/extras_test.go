@@ -208,8 +208,8 @@ extras:
 	result := sb.RunCLI("sync", "extras", "-g")
 
 	result.AssertSuccess(t)
-	// Header should show "Sync Extras"
-	result.AssertAnyOutputContains(t, "Sync Extras")
+	// Header should show "Syncing extras"
+	result.AssertAnyOutputContains(t, "Syncing extras")
 	// Sync verb or file count should appear
 	result.AssertAnyOutputContains(t, "synced")
 

@@ -5,6 +5,7 @@ import DialogShell from './DialogShell';
 import { Input, Checkbox } from './Input';
 import { radius } from '../design';
 import type { DiscoveredSkill } from '../api/client';
+import KindBadge from './KindBadge';
 
 interface SkillPickerModalProps {
   open: boolean;
@@ -82,10 +83,18 @@ export default function SkillPickerModal({
     if (items.length > 0) onInstall(items);
   };
 
+  const allAgents = skills.length > 0 && skills.every((s) => s.kind === 'agent');
+  const someAgents = skills.some((s) => s.kind === 'agent');
+  const singularLabel = allAgents ? 'agent' : someAgents ? 'resource' : 'skill';
+  const pluralLabel = allAgents ? 'agents' : someAgents ? 'resources' : 'skills';
+
   return (
     <DialogShell open={open} onClose={onCancel} maxWidth="2xl" preventClose={installing}>
           <h3 className="text-xl font-bold text-pencil mb-1">
-            {singleSelect ? 'Select a Skill to Install' : 'Select Skills to Install'}
+            {singleSelect
+              ? `Select ${singularLabel[0].toUpperCase() + singularLabel.slice(1)} to Install`
+              : `Select ${pluralLabel[0].toUpperCase() + pluralLabel.slice(1)} to Install`
+            }
           </h3>
           <p className="text-sm text-pencil-light mb-4 truncate font-mono">
             {source}
@@ -101,7 +110,7 @@ export default function SkillPickerModal({
               />
               <Input
                 type="text"
-                placeholder="Filter skills..."
+                placeholder={`Filter ${pluralLabel}...`}
                 value={filter}
                 onChange={(e) => setFilter(e.target.value)}
                 className="!pl-8 !py-1.5 !text-sm font-mono"
@@ -119,7 +128,7 @@ export default function SkillPickerModal({
               />
               {filter && (
                 <span className="text-xs text-muted-dark">
-                  {filtered.length} of {skills.length} skills
+                  {filtered.length} of {skills.length} {pluralLabel}
                 </span>
               )}
             </div>
@@ -129,40 +138,50 @@ export default function SkillPickerModal({
           {singleSelect && (
             <div className="border-b border-dashed border-pencil-light/30 pb-2 mb-2">
               <span className="text-xs text-muted-dark">
-                Custom name is set — select one skill
+                Custom name is set — select one {singularLabel}
                 {filter && ` (${filtered.length} of ${skills.length})`}
               </span>
             </div>
           )}
 
           {/* Skill list */}
-          <div className="overflow-y-auto space-y-1 mb-4" style={{ maxHeight: '16rem' }}>
+          <div className="overflow-y-auto space-y-1.5 mb-4" style={{ maxHeight: '22rem' }}>
             {filtered.map((skill) => {
               const isSelected = selected.has(skill.path);
               return (
                 <label
                   key={skill.path}
-                  className="flex items-start gap-2 py-1.5 px-1 rounded-md cursor-pointer hover:bg-muted/30 transition-colors"
+                  className="flex items-start gap-2.5 py-2.5 px-2 rounded-md cursor-pointer hover:bg-muted/30 transition-colors"
                   style={{ borderRadius: radius.sm }}
                 >
                   {singleSelect ? (
-                    <span
-                      className={`mt-1 w-4 h-4 shrink-0 rounded-full border-2 flex items-center justify-center transition-colors ${
+                    <button
+                      type="button"
+                      aria-label={`Select ${skill.name}`}
+                      onClick={(e) => {
+                        e.preventDefault();
+                        e.stopPropagation();
+                        toggle(skill.path);
+                      }}
+                      className={`mt-1 flex h-5 w-5 shrink-0 items-center justify-center rounded-full border-2 transition-colors focus:outline-none focus:ring-2 focus:ring-blue/20 ${
                         isSelected ? 'border-info bg-info' : 'border-muted-dark'
                       }`}
                     >
                       {isSelected && <span className="w-1.5 h-1.5 rounded-full bg-white" />}
-                    </span>
+                    </button>
                   ) : (
-                    <Checkbox
-                      label=""
-                      checked={isSelected}
-                      onChange={() => toggle(skill.path)}
-                      size="sm"
-                    />
+                    <span className="mt-1">
+                      <Checkbox
+                        label=""
+                        checked={isSelected}
+                        onChange={() => toggle(skill.path)}
+                        size="sm"
+                      />
+                    </span>
                   )}
                   <div className="min-w-0 flex-1" onClick={singleSelect ? () => toggle(skill.path) : undefined}>
-                    <span className="font-bold text-pencil text-base">
+                    <span className="font-bold text-pencil text-base inline-flex items-center gap-1.5">
+                      {skill.kind && <KindBadge kind={skill.kind} />}
                       {skill.name}
                     </span>
                     {skill.path !== '.' && skill.path !== skill.name && (

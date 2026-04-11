@@ -6,6 +6,9 @@ import (
 	"strings"
 )
 
+// CrossSkillResultName is the synthetic skill name used for cross-skill analysis results.
+const CrossSkillResultName = "_cross-skill"
+
 // skillCapability summarises the security-relevant capabilities of a single skill,
 // derived entirely from its existing Result (TierProfile + Findings).
 type skillCapability struct {
@@ -134,7 +137,7 @@ func CrossSkillAnalysis(results []*Result) *Result {
 	}
 
 	r := &Result{
-		SkillName:     "_cross-skill",
+		SkillName:     CrossSkillResultName,
 		Findings:      findings,
 		Analyzability: 1.0,
 	}

@@ -180,18 +180,27 @@ skillshare sync
 
 ## Target Filters (include/exclude)
 
-Manage per-target include/exclude filters from the CLI:
+Manage per-target include/exclude filters for both skills and agents from the CLI:
 
 ```bash
+# Skills
 skillshare target claude --add-include "team-*"
 skillshare target claude --add-exclude "_legacy*"
 skillshare target claude --remove-include "team-*"
 skillshare target claude --remove-exclude "_legacy*"
+
+# Agents
+skillshare target claude --add-agent-include "team-*"
+skillshare target claude --add-agent-exclude "draft-*"
+skillshare target claude --remove-agent-include "team-*"
+skillshare target claude --remove-agent-exclude "draft-*"
 ```
 
 After changing filters, run `skillshare sync` to apply.
 
 Filters work in **merge and copy modes**. Patterns use Go `filepath.Match` syntax (`*`, `?`, `[...]`). In symlink mode, filters are ignored.
+
+Agent filters are only available for targets that have an agents path, either from a built-in target definition or an explicit `agents.path` override in config.
 
 See [Configuration](/docs/reference/targets/configuration#include--exclude-target-filters) for pattern cheat sheet and scenarios.
 
@@ -224,11 +233,16 @@ No additional options.
 | Flag | Description |
 |------|-------------|
 | `--mode, -m <mode>` | Set sync mode (merge, copy, or symlink) |
+| `--agent-mode <mode>` | Set agents sync mode (merge, copy, or symlink) |
 | `--target-naming <naming>` | Set target naming (flat or standard) |
 | `--add-include <pattern>` | Add an include filter pattern |
 | `--add-exclude <pattern>` | Add an exclude filter pattern |
 | `--remove-include <pattern>` | Remove an include filter pattern |
 | `--remove-exclude <pattern>` | Remove an exclude filter pattern |
+| `--add-agent-include <pattern>` | Add an agent include filter pattern |
+| `--add-agent-exclude <pattern>` | Add an agent exclude filter pattern |
+| `--remove-agent-include <pattern>` | Remove an agent include filter pattern |
+| `--remove-agent-exclude <pattern>` | Remove an agent exclude filter pattern |
 
 ## Supported AI CLIs
 
@@ -262,10 +276,19 @@ skillshare sync
 skillshare target claude --mode symlink
 skillshare sync
 
-# Add/remove filters
+# Configure agent sync mode
+skillshare target claude --agent-mode copy
+skillshare sync
+
+# Add/remove skill filters
 skillshare target claude --add-include "team-*"
 skillshare target claude --add-exclude "_legacy*"
 skillshare target claude --remove-include "team-*"
+skillshare sync
+
+# Add/remove agent filters
+skillshare target claude --add-agent-include "team-*"
+skillshare target claude --add-agent-exclude "draft-*"
 skillshare sync
 
 # Remove target (restores skills)
@@ -283,6 +306,7 @@ skillshare target remove cursor -p                                # Remove targe
 skillshare target list -p                                         # List project targets
 skillshare target claude -p                                  # Show target info
 skillshare target claude --add-include "team-*" -p          # Add filter
+skillshare target claude --add-agent-include "team-*" -p    # Add agent filter
 ```
 
 ### How It Differs

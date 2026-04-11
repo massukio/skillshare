@@ -22,20 +22,42 @@ func (s *Server) handleToggleSkill(w http.ResponseWriter, r *http.Request, enabl
 	start := time.Now()
 
 	name := r.PathValue("name")
+	kind := r.URL.Query().Get("kind")
+	if kind != "" && kind != "agent" && kind != "skill" {
+		writeError(w, http.StatusBadRequest, "invalid kind: "+kind)
+		return
+	}
 
 	// Resolve under RLock — discovery is I/O-heavy, don't hold write lock
 	s.mu.RLock()
 	source := s.cfg.Source
+	agentsSource := s.agentsSource()
 	s.mu.RUnlock()
 
-	relPath, isDisabled, err := s.resolveSkillRelPathWithStatus(source, name)
-	if err != nil {
-		writeError(w, http.StatusNotFound, err.Error())
-		return
+	relPath := ""
+	isDisabled := false
+	ignorePath := ""
+	if kind == "agent" {
+		if agentsSource == "" {
+			writeError(w, http.StatusNotFound, "agent not found: "+name)
+			return
+		}
+		var err error
+		relPath, isDisabled, err = s.resolveAgentRelPathWithStatus(agentsSource, name)
+		if err != nil {
+			writeError(w, http.StatusNotFound, err.Error())
+			return
+		}
+		ignorePath = filepath.Join(agentsSource, ".agentignore")
+	} else {
+		var err error
+		relPath, isDisabled, err = s.resolveSkillRelPathWithStatus(source, name)
+		if err != nil {
+			writeError(w, http.StatusNotFound, err.Error())
+			return
+		}
+		ignorePath = filepath.Join(source, ".skillignore")
 	}
-
-	ignorePath := filepath.Join(source, ".skillignore")
-
 	// Write lock only for the file mutation
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -73,6 +95,7 @@ func (s *Server) handleToggleSkill(w http.ResponseWriter, r *http.Request, enabl
 
 	s.writeOpsLog(action, "ok", start, map[string]any{
 		"name":  name,
+		"kind":  kind,
 		"scope": "ui",
 	}, "")
 

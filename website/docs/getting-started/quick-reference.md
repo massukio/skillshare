@@ -51,6 +51,20 @@ Command cheat sheet for skillshare.
 | `extras remove <name>` | Remove an extras entry from config |
 | `extras collect <name>` | Collect local files from extras target into source |
 
+## Agent Management
+
+| Command | Description |
+|---------|-------------|
+| `list agents` | List installed agents |
+| `install <source> --kind agent` | Install only agents from a repo |
+| `install <source> -a <name>` | Install specific agent(s) by name |
+| `uninstall --kind agent <name>` | Remove an agent |
+| `sync agents` | Sync only agents to targets |
+| `check agents` | Check agents for updates |
+| `audit agents` | Security scan agents |
+| `enable --kind agent <name>` | Re-enable a disabled agent |
+| `disable --kind agent <name>` | Disable an agent via `.agentignore` |
+
 ## Sync Operations
 
 | Command | Description |
@@ -162,8 +176,9 @@ make playground-down     # stop container
 | Path | Description |
 |------|-------------|
 | `~/.config/skillshare/config.yaml` | Configuration file |
-| `~/.config/skillshare/skills/registry.yaml` | Installed skill registry (auto-managed) |
-| `~/.config/skillshare/skills/` | Source directory |
+| `~/.config/skillshare/skills/.metadata.json` | Installed skill metadata (auto-managed) |
+| `~/.config/skillshare/skills/` | Skill source directory |
+| `~/.config/skillshare/agents/` | Agent source directory |
 | `~/.config/skillshare/extras/<name>/` | Extras source directories |
 | `~/.local/state/skillshare/logs/` | Operation and audit logs |
 | `~/.local/share/skillshare/backups/` | Backup directory |

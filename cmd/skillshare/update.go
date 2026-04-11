@@ -130,6 +130,24 @@ func cmdUpdate(args []string) error {
 
 	applyModeLabel(mode)
 
+	// Extract kind filter (e.g. "skillshare update agents")
+	kind, rest := parseKindArg(rest)
+
+	// Agent-only update: dispatch to correct scope
+	if kind == kindAgents {
+		if mode == modeProject {
+			return cmdUpdateAgentsProject(rest, cwd, start)
+		}
+		cfg, loadErr := config.Load()
+		if loadErr != nil {
+			if hasFlag(rest, "--json") {
+				return writeJSONError(loadErr)
+			}
+			return loadErr
+		}
+		return cmdUpdateAgents(rest, cfg, start)
+	}
+
 	if mode == modeProject {
 		// Parse opts for logging (cmdUpdateProject parses again internally)
 		projOpts, _, _ := parseUpdateArgs(rest)
@@ -167,24 +185,15 @@ func cmdUpdate(args []string) error {
 
 	// In JSON mode, redirect all UI output to stderr early so the
 	// header, step, spinner, and handler output don't corrupt stdout.
-	var restoreJSONUI func()
-	restoreJSONUIIfNeeded := func() {
-		if restoreJSONUI != nil {
-			restoreJSONUI()
-			restoreJSONUI = nil
-		}
-	}
-	if opts.jsonOutput {
-		restoreJSONUI = suppressUIToDevnull()
-	}
-	defer restoreJSONUIIfNeeded()
+	jsonUI := newJSONUISuppressor(opts.jsonOutput)
+	defer jsonUI.Flush()
 
 	jsonWriteError := func(err error) error {
-		restoreJSONUIIfNeeded()
+		jsonUI.Flush()
 		return writeJSONError(err)
 	}
 	jsonWriteResult := func(result *updateResult, cmdErr error) error {
-		restoreJSONUIIfNeeded()
+		jsonUI.Flush()
 		return updateOutputJSON(result, opts.dryRun, start, cmdErr)
 	}
 
@@ -200,6 +209,7 @@ func cmdUpdate(args []string) error {
 		// Recursive discovery for --all
 		scanSpinner := ui.StartSpinner("Scanning skills...")
 		walkRoot := utils.ResolveSymlink(cfg.Source)
+		metaStore, _ := install.LoadMetadataWithMigration(cfg.Source, "")
 		err := filepath.Walk(walkRoot, func(path string, info os.FileInfo, err error) error {
 			if err != nil || path == walkRoot {
 				return nil
@@ -226,12 +236,11 @@ func cmdUpdate(args []string) error {
 			// Regular skill
 			if !info.IsDir() && info.Name() == "SKILL.md" {
 				skillDir := filepath.Dir(path)
-				meta, metaErr := install.ReadMeta(skillDir)
-				if metaErr == nil && meta != nil && meta.Source != "" {
-					rel, _ := filepath.Rel(walkRoot, skillDir)
-					if rel != "." && !seen[rel] {
+				rel, _ := filepath.Rel(walkRoot, skillDir)
+				if rel != "." && !seen[rel] {
+					if entry := metaStore.GetByPath(rel); entry != nil && entry.Source != "" {
 						seen[rel] = true
-						targets = append(targets, updateTarget{name: rel, path: skillDir, isRepo: false, meta: meta})
+						targets = append(targets, updateTarget{name: rel, path: skillDir, isRepo: false, meta: entry})
 					}
 				}
 			}
@@ -245,6 +254,8 @@ func cmdUpdate(args []string) error {
 			return fmt.Errorf("failed to scan skills: %w", err)
 		}
 	} else {
+		// Load store once for name resolution
+		nameStore, _ := install.LoadMetadata(cfg.Source)
 		// Resolve by specific names/groups
 		for _, name := range opts.names {
 			// Glob pattern matching (e.g. "core-*", "_team-?")
@@ -268,7 +279,7 @@ func cmdUpdate(args []string) error {
 				continue
 			}
 
-			if isGroupDir(name, cfg.Source) {
+			if isGroupDir(name, cfg.Source, nameStore) {
 				groupMatches, groupErr := resolveGroupUpdatable(name, cfg.Source)
 				if groupErr != nil {
 					resolveWarnings = append(resolveWarnings, fmt.Sprintf("%s: %v", name, groupErr))
@@ -481,6 +492,7 @@ func logUpdateOp(cfgPath string, names []string, opts *updateOptions, mode strin
 
 func printUpdateHelp() {
 	fmt.Println(`Usage: skillshare update <name>... [options]
+       skillshare update [agents] <name|--all> [options]
        skillshare update --group <group> [options]
        skillshare update --all [options]
 
@@ -528,5 +540,8 @@ Examples:
   skillshare update --all -T high         # Use HIGH threshold for this run
   skillshare update --all --dry-run       # Preview updates
   skillshare update _team --force         # Discard changes and update
-  skillshare update --all --prune        # Update all + remove stale skills`)
+  skillshare update --all --prune        # Update all + remove stale skills
+  skillshare update agents --all         # Update all agents
+  skillshare update agents tutor         # Update a single agent
+  skillshare update agents -G demo       # Update all agents in demo/`)
 }

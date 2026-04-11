@@ -216,6 +216,9 @@ func performProjectInit(root string, opts projectInitOptions) error {
 	if err := os.MkdirAll(filepath.Join(root, ".skillshare", "skills"), 0755); err != nil {
 		return fmt.Errorf("failed to create .skillshare/skills: %w", err)
 	}
+	if err := os.MkdirAll(filepath.Join(root, ".skillshare", "agents"), 0755); err != nil {
+		return fmt.Errorf("failed to create .skillshare/agents: %w", err)
+	}
 
 	if err := ensureProjectGitignore(root, opts.configMode == "local"); err != nil {
 		return err

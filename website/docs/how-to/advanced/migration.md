@@ -67,10 +67,8 @@ skillshare collect --all
 
 **Option B: Reinstall from source** (gets latest versions)
 ```bash
-# Find original sources from skill metadata
-cat ~/.config/skillshare/skills/pdf/.skillshare-meta.json
-# or check the registry
-cat ~/.config/skillshare/skills/registry.yaml
+# Check the metadata
+cat ~/.config/skillshare/skills/.metadata.json
 
 # Reinstall
 skillshare install anthropics/skills/skills/pdf

@@ -8,8 +8,8 @@ import (
 	"time"
 
 	"skillshare/internal/audit"
+	"skillshare/internal/resource"
 	"skillshare/internal/sync"
-	"skillshare/internal/utils"
 )
 
 type auditFindingResponse struct {
@@ -40,6 +40,7 @@ type auditResultResponse struct {
 	AuditableBytes int64                  `json:"auditableBytes"`
 	Analyzability  float64                `json:"analyzability"`
 	TierProfile    audit.TierProfile      `json:"tierProfile"`
+	Kind           string                 `json:"kind,omitempty"`
 }
 
 type auditSummary struct {
@@ -67,10 +68,46 @@ type skillEntry struct {
 	path string
 }
 
+// discoverAuditAgents discovers agents (individual .md files) for audit scanning.
+func discoverAuditAgents(source string) ([]skillEntry, error) {
+	if source == "" {
+		return []skillEntry{}, nil
+	}
+	if _, err := os.Stat(source); err != nil {
+		if os.IsNotExist(err) {
+			return []skillEntry{}, nil
+		}
+		return nil, err
+	}
+
+	discovered, err := resource.AgentKind{}.Discover(source)
+	if err != nil {
+		return nil, err
+	}
+	var agents []skillEntry
+	for _, d := range discovered {
+		agents = append(agents, skillEntry{name: d.FlatName, path: d.AbsPath})
+	}
+	return agents, nil
+}
+
 // discoverAuditSkills discovers and deduplicates skills for audit scanning.
 func discoverAuditSkills(source string) ([]skillEntry, error) {
+	if source == "" {
+		return []skillEntry{}, nil
+	}
+	if _, err := os.Stat(source); err != nil {
+		if os.IsNotExist(err) {
+			return []skillEntry{}, nil
+		}
+		return nil, err
+	}
+
 	discovered, err := sync.DiscoverSourceSkills(source)
 	if err != nil {
+		if os.IsNotExist(err) {
+			return []skillEntry{}, nil
+		}
 		return nil, err
 	}
 
@@ -83,18 +120,6 @@ func discoverAuditSkills(source string) ([]skillEntry, error) {
 		}
 		seen[d.SourcePath] = true
 		skills = append(skills, skillEntry{d.FlatName, d.SourcePath})
-	}
-
-	entries, _ := os.ReadDir(source)
-	for _, e := range entries {
-		if !e.IsDir() || utils.IsHidden(e.Name()) {
-			continue
-		}
-		p := filepath.Join(source, e.Name())
-		if !seen[p] {
-			seen[p] = true
-			skills = append(skills, skillEntry{e.Name(), p})
-		}
 	}
 
 	return skills, nil
@@ -249,10 +274,19 @@ func processAuditResults(skills []skillEntry, scanned []audit.ScanOutput, policy
 	}
 }
 
+// resolveAuditSource returns the source directory, result kind label, and whether agents are being scanned.
+func (s *Server) resolveAuditSource(r *http.Request) (string, string, bool) {
+	kind := r.URL.Query().Get("kind")
+	if kind == "agents" {
+		return s.agentsSource(), "agent", true
+	}
+	return s.cfg.Source, "skill", false
+}
+
 func (s *Server) handleAuditAll(w http.ResponseWriter, r *http.Request) {
 	// Snapshot config under RLock, then release before I/O.
 	s.mu.RLock()
-	source := s.cfg.Source
+	source, resultKind, isAgents := s.resolveAuditSource(r)
 	policy := s.auditPolicy()
 	projectRoot := s.projectRoot
 	cfgPath := s.configPath()
@@ -262,7 +296,13 @@ func (s *Server) handleAuditAll(w http.ResponseWriter, r *http.Request) {
 
 	start := time.Now()
 
-	skills, err := discoverAuditSkills(source)
+	var skills []skillEntry
+	var err error
+	if isAgents {
+		skills, err = discoverAuditAgents(source)
+	} else {
+		skills, err = discoverAuditSkills(source)
+	}
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
@@ -272,9 +312,21 @@ func (s *Server) handleAuditAll(w http.ResponseWriter, r *http.Request) {
 	if !isProjectMode {
 		auditProjectRoot = ""
 	}
-	scanned := audit.ParallelScan(skillsToAuditInputs(skills), auditProjectRoot, nil, nil)
+	var inputs []audit.SkillInput
+	if isAgents {
+		inputs = make([]audit.SkillInput, len(skills))
+		for i, s := range skills {
+			inputs[i] = audit.SkillInput{Name: s.name, Path: s.path, IsFile: true}
+		}
+	} else {
+		inputs = skillsToAuditInputs(skills)
+	}
+	scanned := audit.ParallelScan(inputs, auditProjectRoot, nil, nil)
 
 	agg := processAuditResults(skills, scanned, policy)
+	for i := range agg.Results {
+		agg.Results[i].Kind = resultKind
+	}
 	writeAuditLogTo(cfgPath, agg.Status, start, agg.LogArgs, agg.Message)
 
 	writeJSON(w, map[string]any{
@@ -287,6 +339,7 @@ func (s *Server) handleAuditSkill(w http.ResponseWriter, r *http.Request) {
 	// Snapshot config under RLock, then release before I/O.
 	s.mu.RLock()
 	source := s.cfg.Source
+	agentsSource := s.agentsSource()
 	policy := s.auditPolicy()
 	projectRoot := s.projectRoot
 	cfgPath := s.configPath()
@@ -296,22 +349,46 @@ func (s *Server) handleAuditSkill(w http.ResponseWriter, r *http.Request) {
 
 	start := time.Now()
 	name := r.PathValue("name")
+	kind := r.URL.Query().Get("kind")
 	threshold := policy.Threshold
-	skillPath := filepath.Join(source, name)
-
-	if _, err := os.Stat(skillPath); os.IsNotExist(err) {
-		writeError(w, http.StatusNotFound, "skill not found: "+name)
-		return
-	}
 
 	var (
 		result *audit.Result
 		err    error
 	)
-	if isProjectMode {
-		result, err = audit.ScanSkillForProject(skillPath, projectRoot)
+
+	if kind == "agent" {
+		// Resolve agent file path via discovery
+		var agentPath string
+		if agentsSource != "" {
+			discovered, _ := resource.AgentKind{}.Discover(agentsSource)
+			for _, d := range discovered {
+				if d.FlatName == name || d.Name == name {
+					agentPath = d.AbsPath
+					break
+				}
+			}
+		}
+		if agentPath == "" {
+			writeError(w, http.StatusNotFound, "agent not found: "+name)
+			return
+		}
+		if isProjectMode {
+			result, err = audit.ScanFileForProject(agentPath, projectRoot)
+		} else {
+			result, err = audit.ScanFile(agentPath)
+		}
 	} else {
-		result, err = audit.ScanSkill(skillPath)
+		skillPath := filepath.Join(source, name)
+		if _, statErr := os.Stat(skillPath); os.IsNotExist(statErr) {
+			writeError(w, http.StatusNotFound, "skill not found: "+name)
+			return
+		}
+		if isProjectMode {
+			result, err = audit.ScanSkillForProject(skillPath, projectRoot)
+		} else {
+			result, err = audit.ScanSkill(skillPath)
+		}
 	}
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
@@ -647,6 +724,7 @@ func toAuditResponse(result *audit.Result) auditResultResponse {
 	}
 	return auditResultResponse{
 		SkillName:      result.SkillName,
+		Kind:           result.Kind,
 		Findings:       findings,
 		RiskScore:      result.RiskScore,
 		RiskLabel:      result.RiskLabel,
