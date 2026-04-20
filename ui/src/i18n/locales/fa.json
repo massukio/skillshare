@@ -879,7 +879,7 @@
   "shortcuts.refreshPage": "تازه‌سازی صفحه فعلی",
   "shortcuts.title": "میان‌برهای صفحه‌کلید",
   "skillEditor.argsBudgetWarning": "بیش از بودجه ۵ هزار توکن",
-  "skillEditor.argsHint": "×{count} · هنگام فراخوانی جایگزین می‌شود",
+  "skillEditor.argsHint": "هنگام فراخوانی جایگزین می‌شود",
   "skillEditor.argsTitle": "این اسکیل از $ARGUMENTS استفاده می‌کند — هنگام فراخوانی جایگزین می‌شود",
   "skillEditor.cancelButton": "لغو",
   "skillEditor.copyPath": "کپی مسیر",

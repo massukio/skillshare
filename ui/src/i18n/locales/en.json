@@ -1151,7 +1151,7 @@
   "skillEditor.toast.saved": "Saved \u00b7 {name}",
   "skillEditor.toast.saveFailed": "Save failed: {error}",
   "skillEditor.argsBudgetWarning": "Over 5K token budget",
-  "skillEditor.argsHint": "×{count} · will be replaced when invoked",
+  "skillEditor.argsHint": "will be replaced when invoked",
   "skillEditor.argsTitle": "This skill uses $ARGUMENTS — will be replaced at invocation",
   "skillEditor.cancelButton": "Cancel",
   "skillEditor.copyPath": "Copy path",

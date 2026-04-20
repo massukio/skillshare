@@ -879,7 +879,7 @@
   "shortcuts.refreshPage": "Segarkan halaman saat ini",
   "shortcuts.title": "Pintasan keyboard",
   "skillEditor.argsBudgetWarning": "Melebihi anggaran token 5K",
-  "skillEditor.argsHint": "×{count} · akan diganti saat dipanggil",
+  "skillEditor.argsHint": "akan diganti saat dipanggil",
   "skillEditor.argsTitle": "Skill ini menggunakan $ARGUMENTS — akan diganti saat pemanggilan",
   "skillEditor.cancelButton": "Batal",
   "skillEditor.copyPath": "Salin path",

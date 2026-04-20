@@ -879,7 +879,7 @@
   "shortcuts.refreshPage": "刷新当前页面",
   "shortcuts.title": "键盘快捷键",
   "skillEditor.argsBudgetWarning": "超出 5K token 预算",
-  "skillEditor.argsHint": "×{count} · 调用时将被替换",
+  "skillEditor.argsHint": "调用时将被替换",
   "skillEditor.argsTitle": "此 skill 使用了 $ARGUMENTS——调用时将被替换",
   "skillEditor.cancelButton": "取消",
   "skillEditor.copyPath": "复制路径",

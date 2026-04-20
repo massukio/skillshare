@@ -1,6 +1,7 @@
 import { useCallback, useDeferredValue, useEffect, useMemo, useRef, useState } from 'react';
 import Markdown, { type Components } from 'react-markdown';
 import remarkGfm from 'remark-gfm';
+import { highlightArgs } from '../../lib/highlightArgs';
 import {
   AlignLeft,
   ArrowLeft,
@@ -335,10 +336,7 @@ export default function SkillEditor({
 
   const deferredBody = useDeferredValue(draftBody);
 
-  const argsCount = useMemo(() => {
-    const matches = draftBody.match(/\$ARGUMENTS\b/g);
-    return matches ? matches.length : 0;
-  }, [draftBody]);
+  const hasArgs = useMemo(() => /\$ARGUMENTS\b/.test(draftBody), [draftBody]);
 
   const patchFrontmatter = useCallback((next: Frontmatter) => {
     setDraftFrontmatter(next);
@@ -573,13 +571,13 @@ export default function SkillEditor({
                   onScroll={handleTextareaScroll}
                   spellCheck={false}
                 />
-                {argsCount > 0 && (
+                {hasArgs && (
                   <div
                     className="args-hint"
                     title={t('skillEditor.argsTitle')}
                   >
                     <span className="args-token-pill">$ARGUMENTS</span>
-                    <span>{t('skillEditor.argsHint', { count: argsCount })}</span>
+                    <span>{t('skillEditor.argsHint')}</span>
                   </div>
                 )}
               </div>
@@ -654,16 +652,6 @@ function migrateRootTargets(fm: Frontmatter): Frontmatter {
   meta.targets = list;
   next.metadata = meta as Frontmatter[string];
   return next;
-}
-
-function highlightArgs(children: React.ReactNode): React.ReactNode {
-  if (typeof children === 'string') return highlightArgsInString(children);
-  if (Array.isArray(children)) {
-    return children.map((c, i) =>
-      typeof c === 'string' ? <span key={i}>{highlightArgsInString(c)}</span> : c
-    );
-  }
-  return children;
 }
 
 function measureTextareaLineTops(
@@ -753,17 +741,4 @@ function slugifyChildren(children: React.ReactNode): string {
     .replace(/\s+/g, '-');
 }
 
-function highlightArgsInString(s: string): React.ReactNode {
-  const parts = s.split(/(\$ARGUMENTS\b)/g);
-  if (parts.length === 1) return s;
-  return parts.map((p, i) =>
-    p === '$ARGUMENTS' ? (
-      <span key={i} className="arg-token">
-        $ARGUMENTS
-      </span>
-    ) : (
-      p
-    )
-  );
-}
 

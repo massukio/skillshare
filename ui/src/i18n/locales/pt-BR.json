@@ -879,7 +879,7 @@
   "shortcuts.refreshPage": "Atualizar página atual",
   "shortcuts.title": "Atalhos de teclado",
   "skillEditor.argsBudgetWarning": "Acima do orçamento de 5K tokens",
-  "skillEditor.argsHint": "×{count} · será substituído ao invocar",
+  "skillEditor.argsHint": "será substituído ao invocar",
   "skillEditor.argsTitle": "Esta skill usa $ARGUMENTS — será substituído na invocação",
   "skillEditor.cancelButton": "Cancelar",
   "skillEditor.copyPath": "Copiar caminho",

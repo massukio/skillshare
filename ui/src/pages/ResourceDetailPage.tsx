@@ -33,6 +33,7 @@ import { syncMatrixReasonText } from '../lib/syncMatrixText';
 import { SkillEditor, Outline } from '../components/skill-editor';
 import ScrollToTop from '../components/ScrollToTop';
 import { parseSkillMarkdown } from '../lib/frontmatter';
+import { highlightArgs } from '../lib/highlightArgs';
 import { useT } from '../i18n';
 
 const FileViewerModal = lazy(() => import('../components/FileViewerModal'));
@@ -209,6 +210,8 @@ export default function SkillDetailPage() {
 
   // Custom Markdown link component: resolve skill references to internal links
   const mdComponents: Components = {
+    p: ({ children }) => <p>{highlightArgs(children)}</p>,
+    li: ({ children }) => <li>{highlightArgs(children)}</li>,
     a: ({ href, children, ...props }) => {
       if (href) {
         // Check if href is a skill reference (not a URL)

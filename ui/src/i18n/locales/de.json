@@ -879,7 +879,7 @@
   "shortcuts.refreshPage": "Aktuelle Seite aktualisieren",
   "shortcuts.title": "Tastenkürzel",
   "skillEditor.argsBudgetWarning": "Über 5.000-Token-Budget",
-  "skillEditor.argsHint": "×{count} · wird beim Aufruf ersetzt",
+  "skillEditor.argsHint": "wird beim Aufruf ersetzt",
   "skillEditor.argsTitle": "Dieser Skill verwendet $ARGUMENTS — wird beim Aufruf ersetzt",
   "skillEditor.cancelButton": "Abbrechen",
   "skillEditor.copyPath": "Pfad kopieren",

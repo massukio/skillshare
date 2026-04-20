@@ -879,7 +879,7 @@
   "shortcuts.refreshPage": "現在のページを更新",
   "shortcuts.title": "キーボードショートカット",
   "skillEditor.argsBudgetWarning": "5K トークン予算超過",
-  "skillEditor.argsHint": "×{count} · 呼び出し時に置換されます",
+  "skillEditor.argsHint": "呼び出し時に置換されます",
   "skillEditor.argsTitle": "このスキルは $ARGUMENTS を使用します — 呼び出し時に置換されます",
   "skillEditor.cancelButton": "キャンセル",
   "skillEditor.copyPath": "パスをコピー",

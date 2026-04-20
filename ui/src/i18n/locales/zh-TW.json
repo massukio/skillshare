@@ -879,7 +879,7 @@
   "shortcuts.refreshPage": "重新整理目前頁面",
   "shortcuts.title": "鍵盤快捷鍵",
   "skillEditor.argsBudgetWarning": "超過 5K token 預算",
-  "skillEditor.argsHint": "×{count} · 呼叫時將被替換",
+  "skillEditor.argsHint": "呼叫時將被替換",
   "skillEditor.argsTitle": "此 skill 使用 $ARGUMENTS — 呼叫時將被替換",
   "skillEditor.cancelButton": "取消",
   "skillEditor.copyPath": "複製路徑",

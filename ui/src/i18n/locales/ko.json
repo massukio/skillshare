@@ -879,7 +879,7 @@
   "shortcuts.refreshPage": "현재 페이지 새로고침",
   "shortcuts.title": "키보드 단축키",
   "skillEditor.argsBudgetWarning": "5K 토큰 예산 초과",
-  "skillEditor.argsHint": "×{count} · 호출 시 대체됩니다",
+  "skillEditor.argsHint": "호출 시 대체됩니다",
   "skillEditor.argsTitle": "이 skill은 $ARGUMENTS를 사용합니다 — 호출 시 대체됩니다",
   "skillEditor.cancelButton": "취소",
   "skillEditor.copyPath": "경로 복사",
