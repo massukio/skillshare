@@ -409,6 +409,16 @@ export const api = {
       body: JSON.stringify({ content }),
     }),
 
+  // Update source URL for a tracked skill or agent.
+  updateSkillSource: (name: string, source: string, kind?: 'skill' | 'agent') =>
+    apiFetch<{ success: boolean; source: string; repoUrl: string }>(
+      `/resources/${encodeURIComponent(name)}/source${kind ? `?kind=${kind}` : ''}`,
+      {
+        method: 'PATCH',
+        body: JSON.stringify({ source }),
+      },
+    ),
+
   // Launch an external editor (VS Code / Cursor / $EDITOR) against the skill file.
   openSkillInEditor: (
     name: string,

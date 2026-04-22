@@ -209,8 +209,17 @@ function quote(s: string): string {
   return s;
 }
 
-export function composeSkillMarkdown(fm: Frontmatter, body: string, keyOrder?: string[]): string {
-  const fmText = serializeFrontmatter(fm, keyOrder);
+export function composeSkillMarkdown(
+  fm: Frontmatter,
+  body: string,
+  keyOrder?: string[],
+  rawFrontmatter?: string,
+): string {
+  // Preserve original frontmatter text when it hasn't been edited,
+  // avoiding spurious formatting changes (quote style, line wrapping).
+  const fmText = rawFrontmatter != null
+    ? `---\n${rawFrontmatter}\n---`
+    : serializeFrontmatter(fm, keyOrder);
   const bodyText = body.startsWith('\n') ? body : '\n' + body;
   return `${fmText}${bodyText}`;
 }

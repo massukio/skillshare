@@ -786,6 +786,13 @@ func GetRemoteURL(repoPath string) (string, error) {
 	return strings.TrimSpace(string(out)), nil
 }
 
+// SetRemoteURL updates the fetch/push URL for the "origin" remote.
+func SetRemoteURL(repoPath, newURL string) error {
+	cmd := exec.Command("git", "remote", "set-url", "origin", newURL)
+	cmd.Dir = repoPath
+	return cmd.Run()
+}
+
 // GetHeadMessage returns the subject line of the HEAD commit.
 func GetHeadMessage(repoPath string) (string, error) {
 	cmd := exec.Command("git", "log", "-1", "--format=%s")

@@ -5,13 +5,16 @@ import type { InputHTMLAttributes, TextareaHTMLAttributes } from 'react';
 export { Checkbox } from './Checkbox';
 export { Select, type SelectOption } from './Select';
 
-interface InputProps extends InputHTMLAttributes<HTMLInputElement> {
+interface InputProps extends Omit<InputHTMLAttributes<HTMLInputElement>, 'size'> {
   label?: string;
+  size?: 'sm' | 'md';
 }
 
-export function Input({ label, className = '', style, id, ...props }: InputProps) {
+export function Input({ label, className = '', style, id, size = 'md', ...props }: InputProps) {
   const autoId = useId();
   const inputId = id ?? autoId;
+  const sizeClass = size === 'sm' ? 'px-3 py-1.5' : 'px-4 py-2.5';
+  const fontSize = size === 'sm' ? '0.85rem' : '1rem';
 
   return (
     <div>
@@ -27,7 +30,7 @@ export function Input({ label, className = '', style, id, ...props }: InputProps
         id={inputId}
         className={`
           ss-input
-          w-full px-4 py-2.5 bg-surface border-2 border-muted text-pencil
+          w-full ${sizeClass} bg-surface border-2 border-muted text-pencil
           placeholder:text-muted-dark
           hover:border-muted-dark
           focus:outline-none focus:border-pencil
@@ -36,7 +39,7 @@ export function Input({ label, className = '', style, id, ...props }: InputProps
           ${className}
         `}
         style={{
-          fontSize: '1rem',
+          fontSize,
           ...style,
         }}
         {...props}
@@ -45,13 +48,16 @@ export function Input({ label, className = '', style, id, ...props }: InputProps
   );
 }
 
-interface TextareaProps extends TextareaHTMLAttributes<HTMLTextAreaElement> {
+interface TextareaProps extends Omit<TextareaHTMLAttributes<HTMLTextAreaElement>, 'size'> {
   label?: string;
+  size?: 'sm' | 'md';
 }
 
-export function Textarea({ label, className = '', style, id, ...props }: TextareaProps) {
+export function Textarea({ label, className = '', style, id, size = 'md', ...props }: TextareaProps) {
   const autoId = useId();
   const inputId = id ?? autoId;
+  const sizeClass = size === 'sm' ? 'px-3 py-1.5' : 'px-4 py-3';
+  const fontSize = size === 'sm' ? '0.85rem' : '0.95rem';
 
   return (
     <div>
@@ -67,7 +73,7 @@ export function Textarea({ label, className = '', style, id, ...props }: Textare
         id={inputId}
         className={`
           ss-input
-          w-full px-4 py-3 bg-surface border-2 border-muted text-pencil
+          w-full ${sizeClass} bg-surface border-2 border-muted text-pencil
           placeholder:text-muted-dark
           hover:border-muted-dark
           focus:outline-none focus:border-pencil
@@ -76,7 +82,7 @@ export function Textarea({ label, className = '', style, id, ...props }: Textare
           ${className}
         `}
         style={{
-          fontSize: '0.95rem',
+          fontSize,
           ...style,
         }}
         {...props}

@@ -9,6 +9,8 @@ import (
 	"strings"
 	"time"
 
+	"skillshare/internal/git"
+	"skillshare/internal/install"
 	"skillshare/internal/resource"
 	"skillshare/internal/sync"
 )
@@ -33,7 +35,7 @@ func (s *Server) handlePutSkillContent(w http.ResponseWriter, r *http.Request) {
 	start := time.Now()
 
 	s.mu.RLock()
-	source := s.skillsSource()
+	source := s.cfg.Source
 	agentsSource := s.agentsSource()
 	s.mu.RUnlock()
 
@@ -81,6 +83,191 @@ func (s *Server) handlePutSkillContent(w http.ResponseWriter, r *http.Request) {
 		ContentType:  "text/markdown",
 		SavedAt:      time.Now().UTC().Format(time.RFC3339),
 	})
+}
+
+// patchSourceRequest is the JSON body for PATCH /api/resources/{name}/source.
+type patchSourceRequest struct {
+	Source string `json:"source"`
+}
+
+// handlePatchSkillSource updates the source URL for a tracked skill or agent.
+// It updates the metadata store entry and, for tracked repos with a .git directory,
+// also updates the git remote origin URL.
+func (s *Server) handlePatchSkillSource(w http.ResponseWriter, r *http.Request) {
+	start := time.Now()
+	name := r.PathValue("name")
+	kind := r.URL.Query().Get("kind") // optional: "skill" or "agent"
+
+	var req patchSourceRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid JSON body: "+err.Error())
+		return
+	}
+	req.Source = strings.TrimSpace(req.Source)
+	if req.Source == "" {
+		writeError(w, http.StatusBadRequest, "source cannot be empty")
+		return
+	}
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	parsed, parseErr := install.ParseSourceWithOptions(req.Source, s.parseOpts())
+	if parseErr != nil {
+		writeError(w, http.StatusBadRequest, "invalid source: "+parseErr.Error())
+		return
+	}
+
+	newRepoURL := req.Source
+	if parsed.IsGit() {
+		newRepoURL = parsed.CloneURL
+	}
+
+	source := s.cfg.Source
+	agentsSource := s.agentsSource()
+
+	m := s.findMetadataEntry(name, kind, source, agentsSource)
+	if m == nil {
+		writeError(w, http.StatusNotFound, "resource not found: "+name)
+		return
+	}
+	entry := m.Entry
+	if entry == nil {
+		entry = &install.MetadataEntry{}
+		m.Store.Set(m.RelPath, entry)
+	}
+
+	// Detect tracked repo by walking up for .git, bounded by storeDir.
+	// This handles both direct tracked repos (IsInRepo=true) and --into repos.
+	repoRoot := findRepoRoot(m.SourcePath, m.StoreDir)
+	isTracked := repoRoot != ""
+
+	// For tracked repos with missing metadata, infer RepoURL from git remote.
+	oldRepoURL := entry.RepoURL
+	if oldRepoURL == "" && isTracked {
+		if remoteURL, err := git.GetRemoteURL(repoRoot); err == nil && remoteURL != "" {
+			oldRepoURL = remoteURL
+		}
+	}
+
+	oldSource := entry.Source
+	updated := 0
+
+	// For tracked repos, update ALL skills sharing the same git repo.
+	if oldRepoURL != "" && isTracked {
+		oldBase := strings.TrimSuffix(oldRepoURL, ".git")
+		newBase := strings.TrimSuffix(newRepoURL, ".git")
+		for _, key := range m.Store.List() {
+			e := m.Store.Get(key)
+			if e == nil || e.RepoURL != oldRepoURL {
+				continue
+			}
+			e.RepoURL = newRepoURL
+			if oldBase != newBase {
+				e.Source = strings.Replace(e.Source, oldBase, newBase, 1)
+			}
+			updated++
+		}
+		// Also update the entry itself if it was freshly created (no RepoURL yet).
+		if entry.RepoURL != newRepoURL {
+			entry.Source = req.Source
+			entry.RepoURL = newRepoURL
+			updated++
+		}
+	} else {
+		entry.Source = req.Source
+		entry.RepoURL = newRepoURL
+		updated = 1
+	}
+
+	if err := m.Store.Save(m.StoreDir); err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to save metadata: "+err.Error())
+		return
+	}
+
+	// Update git remote origin if this is a tracked repo.
+	if repoRoot != "" {
+		_ = git.SetRemoteURL(repoRoot, newRepoURL)
+	}
+
+	s.writeOpsLog("skill.source", "ok", start, map[string]any{
+		"name":      name,
+		"kind":      m.Kind,
+		"oldSource": oldSource,
+		"newSource": req.Source,
+		"updated":   updated,
+	}, "")
+
+	writeJSON(w, map[string]any{
+		"success": true,
+		"source":  entry.Source,
+		"repoUrl": entry.RepoURL,
+		"updated": updated,
+	})
+}
+
+// metadataLookup holds the result of findMetadataEntry.
+type metadataLookup struct {
+	Store      *install.MetadataStore
+	StoreDir   string
+	Entry      *install.MetadataEntry // nil if resource exists on disk but has no metadata
+	RelPath    string
+	SourcePath string
+	IsInRepo   bool
+	Kind       string // "skill" or "agent"
+}
+
+// findMetadataEntry looks up a metadata entry by name across skills and agents stores.
+func (s *Server) findMetadataEntry(name, kind, source, agentsSource string) *metadataLookup {
+	if kind != "agent" && source != "" {
+		discovered, err := sync.DiscoverSourceSkillsAll(source)
+		if err == nil {
+			for _, d := range discovered {
+				if d.FlatName != name && filepath.Base(d.SourcePath) != name {
+					continue
+				}
+				return &metadataLookup{
+					Store: s.skillsStore, StoreDir: source,
+					Entry: s.skillsStore.GetByPath(d.RelPath),
+					RelPath: d.RelPath, SourcePath: d.SourcePath,
+					IsInRepo: d.IsInRepo, Kind: "skill",
+				}
+			}
+		}
+	}
+
+	if kind != "skill" && agentsSource != "" {
+		agents, _ := resource.AgentKind{}.Discover(agentsSource)
+		for _, d := range agents {
+			if d.FlatName != name && d.Name != name {
+				continue
+			}
+			agentKey := strings.TrimSuffix(d.RelPath, ".md")
+			return &metadataLookup{
+				Store: s.agentsStore, StoreDir: agentsSource,
+				Entry: s.agentsStore.GetByPath(agentKey),
+				RelPath: agentKey, SourcePath: filepath.Dir(d.SourcePath),
+				IsInRepo: d.IsInRepo, Kind: "agent",
+			}
+		}
+	}
+
+	return nil
+}
+
+// findRepoRoot walks up from path looking for a .git directory, bounded by root.
+// Returns the directory containing .git, or "" if none found.
+func findRepoRoot(path, root string) string {
+	cleanRoot := filepath.Clean(root)
+	for dir := path; dir != filepath.Dir(dir); dir = filepath.Dir(dir) {
+		if !strings.HasPrefix(filepath.Clean(dir), cleanRoot) {
+			break
+		}
+		if fi, err := os.Stat(filepath.Join(dir, ".git")); err == nil && fi.IsDir() {
+			return dir
+		}
+	}
+	return ""
 }
 
 // resolveEditableSkillPath locates the on-disk markdown file for a skill or agent.

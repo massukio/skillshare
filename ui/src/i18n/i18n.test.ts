@@ -12,7 +12,7 @@ import {
 } from './index';
 
 function placeholders(value: string): string[] {
-  return [...value.matchAll(/\{([a-zA-Z0-9_.-]+)\}/g)].map((match) => match[1]).sort();
+  return [...new Set([...value.matchAll(/\{([a-zA-Z0-9_.-]+)\}/g)].map((m) => m[1]))].sort();
 }
 
 describe('i18n locale detection', () => {

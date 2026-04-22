@@ -91,6 +91,12 @@ func (s *MetadataStore) GetByPath(relPath string) *MetadataEntry {
 	if e := s.Entries[base]; e != nil && e.Group == group {
 		return e
 	}
+	// Basename-only fallback: tracked repos store metadata with short keys
+	// (e.g. "agent-browser") but discovery produces full relPaths including
+	// the repo prefix (e.g. "_repo/agent-browser/agent-browser").
+	if e := s.Entries[base]; e != nil && e.Group == "" {
+		return e
+	}
 	return nil
 }
 

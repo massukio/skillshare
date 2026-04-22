@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { Code2, LayoutGrid, Plus, X } from 'lucide-react';
 import type { Frontmatter, FrontmatterValue } from '../../lib/frontmatter';
 import { serializeFrontmatter } from '../../lib/frontmatter';
-import { Input } from '../Input';
+import { Input, Textarea } from '../Input';
 import EditorSegment from './controls/EditorSegment';
 import SwitchToggle from './controls/SwitchToggle';
 import CharBudget from './controls/CharBudget';
@@ -509,8 +509,9 @@ function TextField({
   const placeholder = def.placeholder ?? `set ${def.label}…`;
   if (multiline) {
     return (
-      <textarea
-        className="fm-input"
+      <Textarea
+        size="sm"
+        className="mono"
         rows={def.rows ?? 2}
         value={value}
         onChange={(e) => setField(def.key, e.target.value)}
@@ -519,9 +520,9 @@ function TextField({
     );
   }
   return (
-    <input
-      type="text"
-      className="fm-input"
+    <Input
+      size="sm"
+      className="mono"
       value={value}
       onChange={(e) => setField(def.key, e.target.value)}
       placeholder={placeholder}
@@ -719,12 +720,14 @@ function MetadataRowEditor({
   return (
     <div className="fm-custom-row">
       <Input
+        size="sm"
         className="mono fm-custom-key"
         placeholder="key"
         defaultValue={row.key}
         onBlur={(e) => onCommitKey(e.target.value.trim())}
       />
       <Input
+        size="sm"
         className="mono fm-custom-value"
         placeholder={isList ? 'claude, cursor' : 'value'}
         defaultValue={value}

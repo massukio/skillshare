@@ -148,7 +148,7 @@ func (s *Server) handleGetSkill(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Find the skill by flat name or base name
+	// Find the skill by flat name (exact) first, then fall back to base name.
 	if kind != "agent" {
 		discovered, err := sync.DiscoverSourceSkillsAll(source)
 		if err != nil {
@@ -156,12 +156,26 @@ func (s *Server) handleGetSkill(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 
-		for _, d := range discovered {
-			baseName := filepath.Base(d.SourcePath)
-			if d.FlatName != name && baseName != name {
-				continue
+		// Two-pass: prefer FlatName exact match over baseName fallback.
+		var match *sync.DiscoveredSkill
+		for i := range discovered {
+			if discovered[i].FlatName == name {
+				match = &discovered[i]
+				break
 			}
+		}
+		if match == nil {
+			for i := range discovered {
+				if filepath.Base(discovered[i].SourcePath) == name {
+					match = &discovered[i]
+					break
+				}
+			}
+		}
 
+		if match != nil {
+			d := match
+			baseName := filepath.Base(d.SourcePath)
 			item := skillItem{
 				Name:       baseName,
 				Kind:       "skill",
