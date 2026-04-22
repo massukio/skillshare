@@ -1,5 +1,15 @@
 # Changelog
 
+## [0.19.4] - 2026-04-22
+
+### Bug Fixes
+
+- **UI install no longer deletes local source files** — installing a skill from a local path via the Web UI would permanently delete the original source directory after discovery. The cleanup logic now only removes temporary directories created by git clones, leaving user directories untouched. CLI installs were unaffected. Refs: #139
+
+### Improvements
+
+- **`$ARGUMENTS` tokens highlighted on detail page** — skill detail pages in the Web UI now render `$ARGUMENTS` placeholders with the same warning-badge style used in the editor, making them easier to spot when reviewing a skill's content
+
 ## [0.19.3] - 2026-04-18
 
 ### New Features
